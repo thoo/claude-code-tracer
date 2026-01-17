@@ -3,13 +3,33 @@
 from ..models.entries import TokenUsage
 from ..models.responses import CostBreakdown
 
-# Claude pricing per million tokens (as of 2025)
+# Claude pricing per million tokens (as of January 2026)
+# Source: https://docs.anthropic.com/en/docs/about-claude/models#model-comparison-table
 PRICING: dict[str, dict[str, float]] = {
-    "claude-opus-4-5-20251101": {
+    # Claude 4.x models
+    "claude-opus-4-5-20250514": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_create": 6.25,
+        "cache_read": 0.50,
+    },
+    "claude-opus-4-1-20250414": {
         "input": 15.0,
         "output": 75.0,
         "cache_create": 18.75,
         "cache_read": 1.50,
+    },
+    "claude-opus-4-20250514": {
+        "input": 15.0,
+        "output": 75.0,
+        "cache_create": 18.75,
+        "cache_read": 1.50,
+    },
+    "claude-sonnet-4-5-20250514": {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_create": 3.75,
+        "cache_read": 0.30,
     },
     "claude-sonnet-4-20250514": {
         "input": 3.0,
@@ -17,24 +37,36 @@ PRICING: dict[str, dict[str, float]] = {
         "cache_create": 3.75,
         "cache_read": 0.30,
     },
-    "claude-3-5-haiku-20241022": {
+    "claude-haiku-4-5-20250514": {
         "input": 1.0,
         "output": 5.0,
         "cache_create": 1.25,
         "cache_read": 0.10,
     },
-    # Legacy models
+    # Claude 3.x models
     "claude-3-5-sonnet-20241022": {
         "input": 3.0,
         "output": 15.0,
         "cache_create": 3.75,
         "cache_read": 0.30,
     },
+    "claude-3-5-haiku-20241022": {
+        "input": 0.80,
+        "output": 4.0,
+        "cache_create": 1.0,
+        "cache_read": 0.08,
+    },
     "claude-3-opus-20240229": {
         "input": 15.0,
         "output": 75.0,
         "cache_create": 18.75,
         "cache_read": 1.50,
+    },
+    "claude-3-haiku-20240307": {
+        "input": 0.25,
+        "output": 1.25,
+        "cache_create": 0.30,
+        "cache_read": 0.03,
     },
 }
 
