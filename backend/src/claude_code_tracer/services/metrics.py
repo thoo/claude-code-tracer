@@ -32,13 +32,15 @@ def _convert_litellm_pricing(model_data: dict) -> dict[str, float] | None:
     if input_cost is None or output_cost is None:
         return None
 
-    # LiteLLM stores cost per token, we want per million tokens
+    # LiteLLM stores cost per token, we want per million tokens (rounded to 2 decimals)
+    cache_create = model_data.get("cache_creation_input_token_cost", input_cost * 1.25)
+    cache_read = model_data.get("cache_read_input_token_cost", input_cost * 0.1)
+
     return {
-        "input": input_cost * 1_000_000,
-        "output": output_cost * 1_000_000,
-        "cache_create": model_data.get("cache_creation_input_token_cost", input_cost * 1.25)
-        * 1_000_000,
-        "cache_read": model_data.get("cache_read_input_token_cost", input_cost * 0.1) * 1_000_000,
+        "input": round(input_cost * 1_000_000, 2),
+        "output": round(output_cost * 1_000_000, 2),
+        "cache_create": round(cache_create * 1_000_000, 2),
+        "cache_read": round(cache_read * 1_000_000, 2),
     }
 
 
