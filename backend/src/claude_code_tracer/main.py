@@ -1,14 +1,31 @@
 """FastAPI application entry point for Claude Code Tracer."""
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from loguru import logger
 
 from .routers import metrics, sessions, subagents
+from .services.metrics import init_pricing
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan handler for startup/shutdown events."""
+    # Startup
+    logger.info("Starting Claude Code Tracer API")
+    init_pricing()
+    yield
+    # Shutdown
+    logger.info("Shutting down Claude Code Tracer API")
+
 
 app = FastAPI(
     title="Claude Code Tracer",
     description="Analytics dashboard API for Claude Code sessions",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 # Configure CORS

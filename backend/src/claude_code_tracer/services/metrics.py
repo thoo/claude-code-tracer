@@ -1,87 +1,161 @@
-"""Metrics computation service."""
+"""Metrics computation service with dynamic pricing from LiteLLM."""
+
+import httpx
+from loguru import logger
 
 from ..models.entries import TokenUsage
 from ..models.responses import CostBreakdown
 
-# Claude pricing per million tokens (as of January 2026)
-# Source: https://docs.anthropic.com/en/docs/about-claude/models#model-comparison-table
-PRICING: dict[str, dict[str, float]] = {
-    # Claude 4.x models
-    "claude-opus-4-5-20250514": {
-        "input": 5.0,
-        "output": 25.0,
-        "cache_create": 6.25,
-        "cache_read": 0.50,
-    },
-    "claude-opus-4-1-20250414": {
-        "input": 15.0,
-        "output": 75.0,
-        "cache_create": 18.75,
-        "cache_read": 1.50,
-    },
-    "claude-opus-4-20250514": {
-        "input": 15.0,
-        "output": 75.0,
-        "cache_create": 18.75,
-        "cache_read": 1.50,
-    },
-    "claude-sonnet-4-5-20250514": {
-        "input": 3.0,
-        "output": 15.0,
-        "cache_create": 3.75,
-        "cache_read": 0.30,
-    },
+LITELLM_PRICING_URL = (
+    "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+)
+
+# Fallback pricing per million tokens (used if LiteLLM fetch fails)
+FALLBACK_PRICING: dict[str, dict[str, float]] = {
     "claude-sonnet-4-20250514": {
         "input": 3.0,
         "output": 15.0,
         "cache_create": 3.75,
         "cache_read": 0.30,
     },
-    "claude-haiku-4-5-20250514": {
-        "input": 1.0,
-        "output": 5.0,
-        "cache_create": 1.25,
-        "cache_read": 0.10,
-    },
-    # Claude 3.x models
-    "claude-3-5-sonnet-20241022": {
-        "input": 3.0,
-        "output": 15.0,
-        "cache_create": 3.75,
-        "cache_read": 0.30,
-    },
-    "claude-3-5-haiku-20241022": {
-        "input": 0.80,
-        "output": 4.0,
-        "cache_create": 1.0,
-        "cache_read": 0.08,
-    },
-    "claude-3-opus-20240229": {
-        "input": 15.0,
-        "output": 75.0,
-        "cache_create": 18.75,
-        "cache_read": 1.50,
-    },
-    "claude-3-haiku-20240307": {
-        "input": 0.25,
-        "output": 1.25,
-        "cache_create": 0.30,
-        "cache_read": 0.03,
-    },
 }
 
-# Default pricing for unknown models
-DEFAULT_PRICING = PRICING["claude-sonnet-4-20250514"]
+# Global pricing cache (populated on startup)
+_pricing_cache: dict[str, dict[str, float]] = {}
 
 
-def get_model_pricing(model: str) -> dict[str, float]:
+def _convert_litellm_pricing(model_data: dict) -> dict[str, float] | None:
+    """Convert LiteLLM pricing format to our format (per million tokens)."""
+    input_cost = model_data.get("input_cost_per_token")
+    output_cost = model_data.get("output_cost_per_token")
+
+    if input_cost is None or output_cost is None:
+        return None
+
+    # LiteLLM stores cost per token, we want per million tokens
+    return {
+        "input": input_cost * 1_000_000,
+        "output": output_cost * 1_000_000,
+        "cache_create": model_data.get("cache_creation_input_token_cost", input_cost * 1.25)
+        * 1_000_000,
+        "cache_read": model_data.get("cache_read_input_token_cost", input_cost * 0.1) * 1_000_000,
+    }
+
+
+def _extract_claude_pricing(litellm_data: dict) -> dict[str, dict[str, float]]:
+    """Extract Claude model pricing from LiteLLM data."""
+    pricing = {}
+
+    # Model name mappings: LiteLLM key patterns -> our normalized names
+    claude_patterns = [
+        # Direct Anthropic API models (claude/ prefix)
+        ("claude/claude-", "claude-"),
+        # Also check for models without prefix
+        ("claude-opus", "claude-opus"),
+        ("claude-sonnet", "claude-sonnet"),
+        ("claude-haiku", "claude-haiku"),
+        ("claude-3", "claude-3"),
+    ]
+
+    for litellm_key, model_data in litellm_data.items():
+        if not isinstance(model_data, dict):
+            continue
+
+        # Check if this is a Claude model
+        normalized_key = None
+
+        # Prefer claude/ prefixed models (direct Anthropic API)
+        if litellm_key.startswith("claude/"):
+            normalized_key = litellm_key.replace("claude/", "")
+        # Skip AWS Bedrock and Vertex models for now (they have different pricing)
+        elif litellm_key.startswith(("anthropic.", "bedrock/", "vertex_ai/")):
+            continue
+        # Check for direct claude model names
+        elif any(litellm_key.startswith(pattern) for pattern, _ in claude_patterns[1:]):
+            normalized_key = litellm_key
+
+        if normalized_key:
+            converted = _convert_litellm_pricing(model_data)
+            if converted:
+                pricing[normalized_key] = converted
+
+    return pricing
+
+
+def load_pricing_from_litellm() -> dict[str, dict[str, float]]:
+    """Fetch and parse pricing data from LiteLLM GitHub repository."""
+    logger.info("Pulling pricing data from LiteLLM: {}", LITELLM_PRICING_URL)
+
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            response = client.get(LITELLM_PRICING_URL)
+            response.raise_for_status()
+            litellm_data = response.json()
+
+        pricing = _extract_claude_pricing(litellm_data)
+
+        if pricing:
+            logger.info("Loaded pricing for {} Claude models from LiteLLM", len(pricing))
+            # Log a few example models
+            for model in list(pricing.keys())[:3]:
+                p = pricing[model]
+                logger.debug(
+                    "  {} - input: ${}/MTok, output: ${}/MTok",
+                    model,
+                    p["input"],
+                    p["output"],
+                )
+            return pricing
+        else:
+            logger.warning("No Claude models found in LiteLLM data, using fallback pricing")
+            return FALLBACK_PRICING
+
+    except httpx.HTTPError as e:
+        logger.error("Failed to fetch LiteLLM pricing (HTTP error): {}", e)
+        return FALLBACK_PRICING
+    except Exception as e:
+        logger.error("Failed to parse LiteLLM pricing: {}", e)
+        return FALLBACK_PRICING
+
+
+def init_pricing() -> None:
+    """Initialize pricing cache. Call this on server startup."""
+    global _pricing_cache
+    _pricing_cache = load_pricing_from_litellm()
+
+
+def get_pricing() -> dict[str, dict[str, float]]:
+    """Get the current pricing cache."""
+    if not _pricing_cache:
+        init_pricing()
+    return _pricing_cache
+
+
+def get_model_pricing(model: str | None) -> dict[str, float]:
     """Get pricing for a model, with fallback to default."""
-    return PRICING.get(model, DEFAULT_PRICING)
+    if not model:
+        return FALLBACK_PRICING["claude-sonnet-4-20250514"]
+
+    pricing = get_pricing()
+
+    # Try exact match first
+    if model in pricing:
+        return pricing[model]
+
+    # Try partial matches (model name might have different date suffix)
+    model_base = model.rsplit("-", 1)[0] if "-" in model else model
+    for key in pricing:
+        if key.startswith(model_base):
+            return pricing[key]
+
+    # Fallback to sonnet pricing
+    logger.debug("No pricing found for model '{}', using default", model)
+    return FALLBACK_PRICING["claude-sonnet-4-20250514"]
 
 
 def calculate_cost(tokens: TokenUsage, model: str | None = None) -> CostBreakdown:
     """Calculate cost breakdown from token usage."""
-    pricing = get_model_pricing(model) if model else DEFAULT_PRICING
+    pricing = get_model_pricing(model)
 
     return CostBreakdown(
         input_cost=tokens.input_tokens * pricing["input"] / 1_000_000,
@@ -101,7 +175,7 @@ def calculate_cost_from_raw(
     model: str | None = None,
 ) -> float:
     """Calculate total cost from raw token counts."""
-    pricing = get_model_pricing(model) if model else DEFAULT_PRICING
+    pricing = get_model_pricing(model)
 
     return (
         input_tokens * pricing["input"] / 1_000_000

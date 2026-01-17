@@ -7,16 +7,17 @@ from fastapi import APIRouter, Query
 from ..models.responses import DailyMetrics, DailyMetricsResponse
 from ..services.database import get_connection, get_project_dir, list_projects, list_sessions
 from ..services.log_parser import get_project_total_metrics
-from ..services.metrics import PRICING, calculate_cost_from_raw
+from ..services.metrics import calculate_cost_from_raw
+from ..services.metrics import get_pricing as get_model_pricing
 from ..services.queries import DAILY_METRICS_QUERY
 
 router = APIRouter(prefix="/api/metrics", tags=["metrics"])
 
 
 @router.get("/pricing")
-async def get_pricing() -> dict[str, dict[str, float]]:
-    """Get current model pricing."""
-    return PRICING
+async def get_pricing_endpoint() -> dict[str, dict[str, float]]:
+    """Get current model pricing (dynamically loaded from LiteLLM)."""
+    return get_model_pricing()
 
 
 @router.get("/daily/{project_hash}", response_model=DailyMetricsResponse)
