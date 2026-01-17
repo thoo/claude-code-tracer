@@ -9,14 +9,18 @@ FROM read_json_auto('{path}',
 """
 
 TOOL_USAGE_QUERY = """
-WITH tool_uses AS (
+WITH parsed AS (
     SELECT
-        unnest(message.content) as content_item
+        from_json(message.content, '[{{"type": "VARCHAR", "name": "VARCHAR"}}]') as content_list
     FROM read_json_auto('{path}',
         maximum_object_size=104857600,
         ignore_errors=true
     )
     WHERE type = 'assistant'
+),
+tool_uses AS (
+    SELECT unnest(content_list) as content_item
+    FROM parsed
 )
 SELECT
     content_item.name as tool_name,
@@ -28,16 +32,24 @@ ORDER BY count DESC
 """
 
 TOKEN_USAGE_QUERY = """
-SELECT
-    COALESCE(SUM(message.usage.input_tokens), 0) as input_tokens,
-    COALESCE(SUM(message.usage.output_tokens), 0) as output_tokens,
-    COALESCE(SUM(message.usage.cache_creation_input_tokens), 0) as cache_creation,
-    COALESCE(SUM(message.usage.cache_read_input_tokens), 0) as cache_read
-FROM read_json_auto('{path}',
-    maximum_object_size=104857600,
-    ignore_errors=true
+WITH deduplicated AS (
+    SELECT DISTINCT ON (message.id)
+        message.usage.input_tokens as input_tokens,
+        message.usage.output_tokens as output_tokens,
+        message.usage.cache_creation_input_tokens as cache_creation,
+        message.usage.cache_read_input_tokens as cache_read
+    FROM read_json_auto('{path}',
+        maximum_object_size=104857600,
+        ignore_errors=true
+    )
+    WHERE type = 'assistant' AND message.usage IS NOT NULL AND message.id IS NOT NULL
 )
-WHERE type = 'assistant' AND message.usage IS NOT NULL
+SELECT
+    COALESCE(SUM(input_tokens), 0) as input_tokens,
+    COALESCE(SUM(output_tokens), 0) as output_tokens,
+    COALESCE(SUM(cache_creation), 0) as cache_creation,
+    COALESCE(SUM(cache_read), 0) as cache_read
+FROM deduplicated
 """
 
 MESSAGE_COUNT_QUERY = """
@@ -99,15 +111,19 @@ WHERE content IS NOT NULL
 """
 
 SUBAGENT_CALLS_QUERY = """
-WITH task_calls AS (
+WITH parsed AS (
     SELECT
-        unnest(message.content) as content_item,
+        from_json(message.content, '[{{"type": "VARCHAR", "name": "VARCHAR", "id": "VARCHAR", "input": "JSON"}}]') as content_list,
         timestamp
     FROM read_json_auto('{path}',
         maximum_object_size=104857600,
         ignore_errors=true
     )
     WHERE type = 'assistant'
+),
+task_calls AS (
+    SELECT unnest(content_list) as content_item, timestamp
+    FROM parsed
 )
 SELECT
     content_item.id as tool_use_id,
@@ -121,15 +137,19 @@ WHERE content_item.type = 'tool_use'
 """
 
 SKILL_CALLS_QUERY = """
-WITH skill_calls AS (
+WITH parsed AS (
     SELECT
-        unnest(message.content) as content_item,
+        from_json(message.content, '[{{"type": "VARCHAR", "name": "VARCHAR", "id": "VARCHAR", "input": "JSON"}}]') as content_list,
         timestamp
     FROM read_json_auto('{path}',
         maximum_object_size=104857600,
         ignore_errors=true
     )
     WHERE type = 'assistant'
+),
+skill_calls AS (
+    SELECT unnest(content_list) as content_item, timestamp
+    FROM parsed
 )
 SELECT
     content_item.id as tool_use_id,
@@ -142,14 +162,18 @@ WHERE content_item.type = 'tool_use'
 """
 
 CODE_CHANGES_QUERY = """
-WITH edit_calls AS (
+WITH parsed AS (
     SELECT
-        unnest(message.content) as content_item
+        from_json(message.content, '[{{"type": "VARCHAR", "name": "VARCHAR", "input": "JSON"}}]') as content_list
     FROM read_json_auto('{path}',
         maximum_object_size=104857600,
         ignore_errors=true
     )
     WHERE type = 'assistant'
+),
+edit_calls AS (
+    SELECT unnest(content_list) as content_item
+    FROM parsed
 )
 SELECT
     content_item.input.file_path as file_path,
@@ -181,6 +205,30 @@ FROM read_json_auto('{path}',
 WHERE type = 'assistant' AND message.model IS NOT NULL
 """
 
+TOKEN_USAGE_BY_MODEL_QUERY = """
+WITH deduplicated AS (
+    SELECT DISTINCT ON (message.id)
+        message.model as model,
+        message.usage.input_tokens as input_tokens,
+        message.usage.output_tokens as output_tokens,
+        message.usage.cache_creation_input_tokens as cache_creation,
+        message.usage.cache_read_input_tokens as cache_read
+    FROM read_json_auto('{path}',
+        maximum_object_size=104857600,
+        ignore_errors=true
+    )
+    WHERE type = 'assistant' AND message.usage IS NOT NULL AND message.model IS NOT NULL AND message.id IS NOT NULL
+)
+SELECT
+    model,
+    COALESCE(SUM(input_tokens), 0) as input_tokens,
+    COALESCE(SUM(output_tokens), 0) as output_tokens,
+    COALESCE(SUM(cache_creation), 0) as cache_creation,
+    COALESCE(SUM(cache_read), 0) as cache_read
+FROM deduplicated
+GROUP BY model
+"""
+
 USER_COMMANDS_QUERY = """
 WITH entries AS (
     SELECT
@@ -209,21 +257,31 @@ ORDER BY timestamp
 """
 
 DAILY_METRICS_QUERY = """
+WITH deduplicated AS (
+    SELECT DISTINCT ON (message.id)
+        timestamp,
+        message.usage.input_tokens as input_tokens,
+        message.usage.output_tokens as output_tokens,
+        message.usage.cache_creation_input_tokens as cache_creation,
+        message.usage.cache_read_input_tokens as cache_read
+    FROM read_json_auto('{path}',
+        maximum_object_size=104857600,
+        ignore_errors=true
+    )
+    WHERE type = 'assistant'
+      AND message.usage IS NOT NULL
+      AND message.id IS NOT NULL
+      AND timestamp >= '{start_date}'
+      AND timestamp <= '{end_date}'
+)
 SELECT
     date_trunc('day', timestamp) as date,
-    SUM(message.usage.input_tokens) as input_tokens,
-    SUM(message.usage.output_tokens) as output_tokens,
-    SUM(message.usage.cache_creation_input_tokens) as cache_creation,
-    SUM(message.usage.cache_read_input_tokens) as cache_read,
+    SUM(input_tokens) as input_tokens,
+    SUM(output_tokens) as output_tokens,
+    SUM(cache_creation) as cache_creation,
+    SUM(cache_read) as cache_read,
     COUNT(*) as message_count
-FROM read_json_auto('{path}',
-    maximum_object_size=104857600,
-    ignore_errors=true
-)
-WHERE type = 'assistant'
-  AND message.usage IS NOT NULL
-  AND timestamp >= '{start_date}'
-  AND timestamp <= '{end_date}'
+FROM deduplicated
 GROUP BY date_trunc('day', timestamp)
 ORDER BY date
 """

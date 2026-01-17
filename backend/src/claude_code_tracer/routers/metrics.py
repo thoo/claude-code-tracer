@@ -121,7 +121,10 @@ async def get_aggregate_metrics(
         return _format_project_metrics(get_project_total_metrics(project_hash))
 
     projects = list_projects()
-    total_tokens = 0
+    input_tokens = 0
+    output_tokens = 0
+    cache_creation = 0
+    cache_read = 0
     total_cost = 0.0
     total_sessions = 0
     first_activity = None
@@ -129,7 +132,11 @@ async def get_aggregate_metrics(
 
     for proj in projects:
         metrics = get_project_total_metrics(proj["path_hash"])
-        total_tokens += metrics.get("total_tokens", 0)
+        tokens = metrics.get("tokens", {})
+        input_tokens += tokens.get("input_tokens", 0)
+        output_tokens += tokens.get("output_tokens", 0)
+        cache_creation += tokens.get("cache_creation_input_tokens", 0)
+        cache_read += tokens.get("cache_read_input_tokens", 0)
         total_cost += metrics.get("total_cost", 0.0)
         total_sessions += metrics.get("session_count", 0)
 
@@ -142,7 +149,12 @@ async def get_aggregate_metrics(
             last_activity = proj_last
 
     return {
-        "total_tokens": total_tokens,
+        "tokens": {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cache_creation_input_tokens": cache_creation,
+            "cache_read_input_tokens": cache_read,
+        },
         "total_cost": total_cost,
         "session_count": total_sessions,
         "project_count": len(projects),
@@ -153,8 +165,9 @@ async def get_aggregate_metrics(
 
 def _format_project_metrics(metrics: dict) -> dict:
     """Format project metrics for API response."""
+    tokens = metrics.get("tokens", {})
     return {
-        "total_tokens": metrics.get("total_tokens", 0),
+        "tokens": tokens,
         "total_cost": metrics.get("total_cost", 0.0),
         "session_count": metrics.get("session_count", 0),
         "first_activity": (

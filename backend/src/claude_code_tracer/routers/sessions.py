@@ -9,6 +9,7 @@ from ..models.responses import (
     CodeChangesResponse,
     CommandsResponse,
     CommandsSummary,
+    CostBreakdown,
     ErrorsResponse,
     MessageListResponse,
     MessageResponse,
@@ -20,6 +21,7 @@ from ..models.responses import (
     SkillsResponse,
     SubagentListResponse,
     ToolUsageResponse,
+    ToolUsageStats,
     UserCommand,
 )
 from ..services.database import get_connection, get_session_path, list_projects, list_sessions
@@ -55,13 +57,19 @@ async def get_projects() -> ProjectListResponse:
     for proj in projects_data:
         # Get aggregated metrics for each project
         metrics = get_project_total_metrics(proj["path_hash"])
+        tokens_data = metrics.get("tokens", {})
 
         projects.append(
             ProjectResponse(
                 path_hash=proj["path_hash"],
                 project_path=proj["project_path"],
                 session_count=metrics.get("session_count", proj.get("session_count", 0)),
-                total_tokens=metrics.get("total_tokens", 0),
+                tokens=TokenUsage(
+                    input_tokens=tokens_data.get("input_tokens", 0),
+                    output_tokens=tokens_data.get("output_tokens", 0),
+                    cache_creation_input_tokens=tokens_data.get("cache_creation_input_tokens", 0),
+                    cache_read_input_tokens=tokens_data.get("cache_read_input_tokens", 0),
+                ),
                 total_cost=metrics.get("total_cost", 0.0),
                 last_activity=metrics.get("last_activity"),
                 first_activity=metrics.get("first_activity"),
@@ -93,6 +101,112 @@ async def get_project_sessions(project_hash: str) -> SessionListResponse:
     sessions.sort(key=lambda s: s.start_time, reverse=True)
 
     return SessionListResponse(sessions=sessions, total=len(sessions))
+
+
+@router.get("/projects/{project_hash}/metrics", response_model=SessionMetricsResponse)
+async def get_project_metrics(project_hash: str) -> SessionMetricsResponse:
+    """Get aggregated metrics for all sessions in a project."""
+    sessions_data = list_sessions(project_hash)
+
+    if not sessions_data:
+        return SessionMetricsResponse()
+
+    # Aggregate metrics across all sessions
+    total_input_tokens = 0
+    total_output_tokens = 0
+    total_cache_creation = 0
+    total_cache_read = 0
+    total_input_cost = 0.0
+    total_output_cost = 0.0
+    total_cache_creation_cost = 0.0
+    total_cache_read_cost = 0.0
+    total_duration = 0
+    total_messages = 0
+    total_tool_calls = 0
+    total_errors = 0
+    all_models: set[str] = set()
+    total_interruptions = 0
+    total_commands = 0
+
+    for sess in sessions_data:
+        metrics = get_session_metrics(project_hash, sess["session_id"])
+        if metrics:
+            total_input_tokens += metrics.tokens.input_tokens
+            total_output_tokens += metrics.tokens.output_tokens
+            total_cache_creation += metrics.tokens.cache_creation_input_tokens
+            total_cache_read += metrics.tokens.cache_read_input_tokens
+            total_input_cost += metrics.cost.input_cost
+            total_output_cost += metrics.cost.output_cost
+            total_cache_creation_cost += metrics.cost.cache_creation_cost
+            total_cache_read_cost += metrics.cost.cache_read_cost
+            total_duration += metrics.duration_seconds
+            total_messages += metrics.message_count
+            total_tool_calls += metrics.tool_calls
+            total_errors += metrics.error_count
+            all_models.update(metrics.models_used)
+            # Track interruptions for rate calculation
+            if metrics.interruption_rate > 0:
+                # Estimate commands from interruption rate
+                estimated_commands = metrics.message_count // 2  # rough estimate
+                total_interruptions += int(estimated_commands * metrics.interruption_rate / 100)
+                total_commands += estimated_commands
+
+    # Calculate cache hit rate
+    total_cache_tokens = total_cache_creation + total_cache_read
+    total_all_input = total_input_tokens + total_cache_tokens
+    cache_hit_rate = (total_cache_read / total_all_input * 100) if total_all_input > 0 else 0.0
+
+    # Calculate interruption rate
+    interruption_rate = (total_interruptions / total_commands * 100) if total_commands > 0 else 0.0
+
+    return SessionMetricsResponse(
+        tokens=TokenUsage(
+            input_tokens=total_input_tokens,
+            output_tokens=total_output_tokens,
+            cache_creation_input_tokens=total_cache_creation,
+            cache_read_input_tokens=total_cache_read,
+        ),
+        cost=CostBreakdown(
+            input_cost=total_input_cost,
+            output_cost=total_output_cost,
+            cache_creation_cost=total_cache_creation_cost,
+            cache_read_cost=total_cache_read_cost,
+        ),
+        duration_seconds=total_duration,
+        message_count=total_messages,
+        tool_calls=total_tool_calls,
+        error_count=total_errors,
+        cache_hit_rate=cache_hit_rate,
+        models_used=sorted(all_models),
+        interruption_rate=interruption_rate,
+    )
+
+
+@router.get("/projects/{project_hash}/tools", response_model=ToolUsageResponse)
+async def get_project_tools(project_hash: str) -> ToolUsageResponse:
+    """Get aggregated tool usage for all sessions in a project."""
+    sessions_data = list_sessions(project_hash)
+
+    if not sessions_data:
+        return ToolUsageResponse(tools=[], total_calls=0)
+
+    # Aggregate tool usage across all sessions
+    tool_counts: dict[str, int] = {}
+
+    for sess in sessions_data:
+        tools_data = get_session_tool_usage(project_hash, sess["session_id"])
+        if tools_data:
+            for tool in tools_data.tools:
+                tool_counts[tool.name] = tool_counts.get(tool.name, 0) + tool.count
+
+    # Convert to response format
+    tools = [
+        ToolUsageStats(name=name, count=count)
+        for name, count in sorted(tool_counts.items(), key=lambda x: x[1], reverse=True)
+    ]
+    total_calls = sum(tool_counts.values())
+
+    return ToolUsageResponse(tools=tools, total_calls=total_calls)
 
 
 @router.get("/sessions/{project_hash}/{session_id}", response_model=SessionSummary)

@@ -27,10 +27,20 @@ class ProjectResponse(BaseModel):
     path_hash: str
     project_path: str
     session_count: int = 0
-    total_tokens: int = 0
+    tokens: TokenUsage = Field(default_factory=TokenUsage)
     total_cost: float = 0.0
     last_activity: datetime | None = None
     first_activity: datetime | None = None
+
+    @computed_field
+    @property
+    def total_tokens(self) -> int:
+        return (
+            self.tokens.input_tokens
+            + self.tokens.output_tokens
+            + self.tokens.cache_creation_input_tokens
+            + self.tokens.cache_read_input_tokens
+        )
 
 
 class ProjectListResponse(BaseModel):

@@ -10,6 +10,7 @@ from duckdb import DuckDBPyConnection
 from ..models.entries import TokenUsage
 from ..models.responses import (
     CodeChangesResponse,
+    CostBreakdown,
     ErrorEntry,
     ErrorsResponse,
     FileChange,
@@ -22,7 +23,7 @@ from ..models.responses import (
     ToolUsageResponse,
     ToolUsageStats,
 )
-from .database import get_connection, get_session_path
+from .database import get_connection, get_session_path, get_subagent_files_for_session
 from .metrics import calculate_cache_hit_rate, calculate_cost, count_lines_changed
 from .queries import (
     CODE_CHANGES_QUERY,
@@ -31,6 +32,7 @@ from .queries import (
     SESSION_TIMERANGE_QUERY,
     SKILL_CALLS_QUERY,
     SUBAGENT_CALLS_QUERY,
+    TOKEN_USAGE_BY_MODEL_QUERY,
     TOKEN_USAGE_QUERY,
     TOOL_USAGE_QUERY,
 )
@@ -110,7 +112,47 @@ def parse_session_summary(project_hash: str, session_id: str) -> SessionSummary 
         if start_time and end_time:
             duration_seconds = int((end_time - start_time).total_seconds())
 
-        cost = calculate_cost(tokens)
+        # Calculate cost per model for accurate total
+        model_tokens_result = _execute_query_all(
+            conn, TOKEN_USAGE_BY_MODEL_QUERY.format(path=path_str)
+        )
+        total_cost = 0.0
+        for row in model_tokens_result:
+            model = row[0]
+            if model:
+                model_tokens = TokenUsage(
+                    input_tokens=row[1] or 0,
+                    output_tokens=row[2] or 0,
+                    cache_creation_input_tokens=row[3] or 0,
+                    cache_read_input_tokens=row[4] or 0,
+                )
+                model_cost = calculate_cost(model_tokens, model)
+                total_cost += model_cost.total_cost
+
+        # Include subagent token usage and costs
+        subagent_files = get_subagent_files_for_session(project_hash, session_id)
+        for subagent_path in subagent_files:
+            subagent_path_str = str(subagent_path)
+            subagent_model_tokens = _execute_query_all(
+                conn, TOKEN_USAGE_BY_MODEL_QUERY.format(path=subagent_path_str)
+            )
+            for row in subagent_model_tokens:
+                model = row[0]
+                if model:
+                    sub_tokens = TokenUsage(
+                        input_tokens=row[1] or 0,
+                        output_tokens=row[2] or 0,
+                        cache_creation_input_tokens=row[3] or 0,
+                        cache_read_input_tokens=row[4] or 0,
+                    )
+                    # Add to total tokens
+                    tokens.input_tokens += sub_tokens.input_tokens
+                    tokens.output_tokens += sub_tokens.output_tokens
+                    tokens.cache_creation_input_tokens += sub_tokens.cache_creation_input_tokens
+                    tokens.cache_read_input_tokens += sub_tokens.cache_read_input_tokens
+                    # Add subagent cost
+                    sub_cost = calculate_cost(sub_tokens, model)
+                    total_cost += sub_cost.total_cost
 
         return SessionSummary(
             session_id=session_id,
@@ -120,7 +162,7 @@ def parse_session_summary(project_hash: str, session_id: str) -> SessionSummary 
             message_count=message_count,
             tool_calls=tool_calls,
             tokens=tokens,
-            cost=cost.total_cost,
+            cost=total_cost,
         )
 
 
@@ -145,11 +187,16 @@ def get_session_metrics(project_hash: str, session_id: str) -> SessionMetricsRes
     with get_connection() as conn:
         path_str = str(session_path)
 
+        # Get total token usage
         token_result = _execute_query(conn, TOKEN_USAGE_QUERY.format(path=path_str))
         if not token_result:
             return SessionMetricsResponse()
-
         tokens = _parse_token_usage(token_result)
+
+        # Get token usage per model for accurate cost calculation
+        model_tokens_result = _execute_query_all(
+            conn, TOKEN_USAGE_BY_MODEL_QUERY.format(path=path_str)
+        )
 
         count_result = _execute_query(conn, MESSAGE_COUNT_QUERY.format(path=path_str), (0, 0, 0))
         message_count = count_result[0] if count_result else 0
@@ -165,10 +212,55 @@ def get_session_metrics(project_hash: str, session_id: str) -> SessionMetricsRes
             if start_ts and end_ts:
                 duration_seconds = int((end_ts - start_ts).total_seconds())
 
-        models_result = _execute_query_all(conn, MODELS_USED_QUERY.format(path=path_str))
-        models_used = [row[0] for row in models_result if row[0]]
+        # Calculate cost per model and sum up
+        models_used = []
+        total_cost = CostBreakdown()
+        for row in model_tokens_result:
+            model = row[0]
+            if model:
+                models_used.append(model)
+                model_tokens = TokenUsage(
+                    input_tokens=row[1] or 0,
+                    output_tokens=row[2] or 0,
+                    cache_creation_input_tokens=row[3] or 0,
+                    cache_read_input_tokens=row[4] or 0,
+                )
+                model_cost = calculate_cost(model_tokens, model)
+                total_cost.input_cost += model_cost.input_cost
+                total_cost.output_cost += model_cost.output_cost
+                total_cost.cache_creation_cost += model_cost.cache_creation_cost
+                total_cost.cache_read_cost += model_cost.cache_read_cost
 
-        cost = calculate_cost(tokens, models_used[0] if models_used else None)
+        # Include subagent token usage and costs
+        subagent_files = get_subagent_files_for_session(project_hash, session_id)
+        for subagent_path in subagent_files:
+            subagent_path_str = str(subagent_path)
+            subagent_model_tokens = _execute_query_all(
+                conn, TOKEN_USAGE_BY_MODEL_QUERY.format(path=subagent_path_str)
+            )
+            for row in subagent_model_tokens:
+                model = row[0]
+                if model:
+                    if model not in models_used:
+                        models_used.append(model)
+                    sub_tokens = TokenUsage(
+                        input_tokens=row[1] or 0,
+                        output_tokens=row[2] or 0,
+                        cache_creation_input_tokens=row[3] or 0,
+                        cache_read_input_tokens=row[4] or 0,
+                    )
+                    # Add to total tokens
+                    tokens.input_tokens += sub_tokens.input_tokens
+                    tokens.output_tokens += sub_tokens.output_tokens
+                    tokens.cache_creation_input_tokens += sub_tokens.cache_creation_input_tokens
+                    tokens.cache_read_input_tokens += sub_tokens.cache_read_input_tokens
+                    # Add subagent cost
+                    sub_cost = calculate_cost(sub_tokens, model)
+                    total_cost.input_cost += sub_cost.input_cost
+                    total_cost.output_cost += sub_cost.output_cost
+                    total_cost.cache_creation_cost += sub_cost.cache_creation_cost
+                    total_cost.cache_read_cost += sub_cost.cache_read_cost
+
         cache_hit_rate = calculate_cache_hit_rate(
             tokens.cache_read_input_tokens,
             tokens.cache_creation_input_tokens,
@@ -177,7 +269,7 @@ def get_session_metrics(project_hash: str, session_id: str) -> SessionMetricsRes
 
         return SessionMetricsResponse(
             tokens=tokens,
-            cost=cost,
+            cost=total_cost,
             duration_seconds=duration_seconds,
             message_count=message_count,
             tool_calls=tool_calls,
@@ -361,7 +453,10 @@ def get_project_total_metrics(
     if session_ids is None:
         session_ids = [f.stem for f in project_dir.glob("*.jsonl")]
 
-    total_tokens = 0
+    input_tokens = 0
+    output_tokens = 0
+    cache_creation = 0
+    cache_read = 0
     total_cost = 0.0
     first_activity = None
     last_activity = None
@@ -369,12 +464,10 @@ def get_project_total_metrics(
     for session_id in session_ids:
         summary = parse_session_summary(project_hash, session_id)
         if summary:
-            total_tokens += (
-                summary.tokens.input_tokens
-                + summary.tokens.output_tokens
-                + summary.tokens.cache_creation_input_tokens
-                + summary.tokens.cache_read_input_tokens
-            )
+            input_tokens += summary.tokens.input_tokens
+            output_tokens += summary.tokens.output_tokens
+            cache_creation += summary.tokens.cache_creation_input_tokens
+            cache_read += summary.tokens.cache_read_input_tokens
             total_cost += summary.cost
 
             if summary.start_time:
@@ -385,7 +478,12 @@ def get_project_total_metrics(
                     last_activity = summary.end_time
 
     return {
-        "total_tokens": total_tokens,
+        "tokens": {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cache_creation_input_tokens": cache_creation,
+            "cache_read_input_tokens": cache_read,
+        },
         "total_cost": total_cost,
         "first_activity": first_activity,
         "last_activity": last_activity,
