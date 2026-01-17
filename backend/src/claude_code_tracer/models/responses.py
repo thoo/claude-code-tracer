@@ -18,7 +18,12 @@ class CostBreakdown(BaseModel):
     @computed_field
     @property
     def total_cost(self) -> float:
-        return self.input_cost + self.output_cost + self.cache_creation_cost + self.cache_read_cost
+        return sum([
+            self.input_cost,
+            self.output_cost,
+            self.cache_creation_cost,
+            self.cache_read_cost,
+        ])
 
 
 class ProjectResponse(BaseModel):
@@ -35,12 +40,12 @@ class ProjectResponse(BaseModel):
     @computed_field
     @property
     def total_tokens(self) -> int:
-        return (
-            self.tokens.input_tokens
-            + self.tokens.output_tokens
-            + self.tokens.cache_creation_input_tokens
-            + self.tokens.cache_read_input_tokens
-        )
+        return sum([
+            self.tokens.input_tokens,
+            self.tokens.output_tokens,
+            self.tokens.cache_creation_input_tokens,
+            self.tokens.cache_read_input_tokens,
+        ])
 
 
 class ProjectListResponse(BaseModel):
@@ -50,10 +55,14 @@ class ProjectListResponse(BaseModel):
 
 
 class SessionSummary(BaseModel):
-    """Session summary for listing."""
+    """Session summary for listing.
+
+    Status values: running, idle, completed, interrupted, unknown.
+    """
 
     session_id: str
     slug: str | None = None
+    status: str = "unknown"
     start_time: datetime
     end_time: datetime | None = None
     duration_seconds: int = 0
@@ -83,9 +92,29 @@ class MessageResponse(BaseModel):
     model: str | None = None
     tokens: TokenUsage = Field(default_factory=TokenUsage)
     tools: list[ToolUse] = Field(default_factory=list)
+    tool_names: str = ""
     has_tool_result: bool = False
     is_error: bool = False
     session_id: str
+
+
+class MessageDetailResponse(BaseModel):
+    """Detailed message response with full content and tool details."""
+
+    uuid: str
+    message_id: str | None = None
+    type: str
+    timestamp: datetime
+    content: str | None = None
+    model: str | None = None
+    tokens: TokenUsage = Field(default_factory=TokenUsage)
+    tools: list[ToolUse] = Field(default_factory=list)
+    tool_results: list[dict] = Field(default_factory=list)
+    is_error: bool = False
+    session_id: str
+    cwd: str | None = None
+    message_index: int = 0
+    total_messages: int = 0
 
 
 class MessageListResponse(BaseModel):
@@ -96,6 +125,21 @@ class MessageListResponse(BaseModel):
     page: int = 1
     per_page: int = 50
     total_pages: int = 0
+
+
+class ToolFilterOption(BaseModel):
+    """Tool filter option for dropdown."""
+
+    name: str
+    count: int
+
+
+class MessageFilterOptions(BaseModel):
+    """Available filter options for messages."""
+
+    types: list[str] = Field(default_factory=lambda: ["assistant", "user", "subagent", "hook", "tool_result"])
+    tools: list[ToolFilterOption] = Field(default_factory=list)
+    error_count: int = 0
 
 
 class ToolUsageStats(BaseModel):
@@ -194,10 +238,13 @@ class SkillsResponse(BaseModel):
 
 
 class FileChange(BaseModel):
-    """Single file change information."""
+    """Single file change information.
+
+    Operation values: Edit, Write.
+    """
 
     file_path: str
-    operation: str  # "Edit" or "Write"
+    operation: str
     lines_added: int = 0
     lines_removed: int = 0
 

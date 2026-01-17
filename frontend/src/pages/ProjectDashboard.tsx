@@ -15,7 +15,7 @@ import EmptyState from '../components/common/EmptyState';
 import StatsCard from '../components/common/StatsCard';
 import Badge from '../components/common/Badge';
 import ToolUsageChart from '../components/charts/ToolUsageChart';
-import type { SessionSummary } from '../types';
+import type { SessionSummary, SessionStatus } from '../types';
 
 type TabType = 'sessions' | 'metrics';
 
@@ -167,6 +167,9 @@ function SessionsList({ sessions, projectHash }: SessionsListProps) {
                 Session
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                Status
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                 Duration
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
@@ -186,9 +189,6 @@ function SessionsList({ sessions, projectHash }: SessionsListProps) {
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                 Errors
-              </th>
-              <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
-                Actions
               </th>
             </tr>
           </thead>
@@ -219,12 +219,17 @@ function SessionRow({ session, projectHash }: SessionRowProps) {
   return (
     <tr className="transition-colors hover:bg-gray-50/50">
       <td className="px-6 py-4">
-        <div>
-          <div className="font-medium text-gray-900">{session.slug || session.session_id}</div>
+        <Link to={`/session/${projectHash}/${session.session_id}`} className="block group">
+          <div className="font-medium text-gray-900 group-hover:text-primary-600">
+            {session.slug || session.session_id}
+          </div>
           <div className="text-sm text-gray-500" title={formatDateTime(session.start_time)}>
             {formatRelativeTime(session.start_time)}
           </div>
-        </div>
+        </Link>
+      </td>
+      <td className="px-6 py-4">
+        <SessionStatusBadge status={session.status} />
       </td>
       <td className="px-6 py-4 text-sm text-gray-700">{formatDuration(session.duration_seconds)}</td>
       <td className="px-6 py-4 text-sm text-gray-700">{session.message_count}</td>
@@ -243,17 +248,6 @@ function SessionRow({ session, projectHash }: SessionRowProps) {
         ) : (
           <Badge variant="success">0</Badge>
         )}
-      </td>
-      <td className="px-6 py-4 text-right">
-        <Link
-          to={`/session/${projectHash}/${session.session_id}`}
-          className="inline-flex items-center gap-1 text-sm font-medium text-primary-600 hover:text-primary-700"
-        >
-          View
-          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-          </svg>
-        </Link>
       </td>
     </tr>
   );
@@ -312,6 +306,45 @@ function ProjectMetricsView({ projectHash }: ProjectMetricsViewProps) {
         </div>
       )}
     </div>
+  );
+}
+
+function SessionStatusBadge({ status }: { status: SessionStatus }) {
+  const config: Record<SessionStatus, { label: string; className: string }> = {
+    running: {
+      label: 'Running',
+      className: 'bg-green-100 text-green-800 border-green-200',
+    },
+    idle: {
+      label: 'Idle',
+      className: 'bg-yellow-100 text-yellow-800 border-yellow-200',
+    },
+    completed: {
+      label: 'Completed',
+      className: 'bg-gray-100 text-gray-600 border-gray-200',
+    },
+    interrupted: {
+      label: 'Interrupted',
+      className: 'bg-orange-100 text-orange-800 border-orange-200',
+    },
+    unknown: {
+      label: 'Unknown',
+      className: 'bg-gray-100 text-gray-500 border-gray-200',
+    },
+  };
+
+  const { label, className } = config[status] || config.unknown;
+
+  return (
+    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 text-xs font-medium rounded-full border ${className}`}>
+      {status === 'running' && (
+        <span className="relative flex h-2 w-2">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+          <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+        </span>
+      )}
+      {label}
+    </span>
   );
 }
 

@@ -32,9 +32,12 @@ export interface ProjectListResponse {
 }
 
 // Session types
+export type SessionStatus = 'running' | 'idle' | 'completed' | 'interrupted' | 'unknown';
+
 export interface SessionSummary {
   session_id: string;
   slug: string | null;
+  status: SessionStatus;
   start_time: string;
   end_time: string | null;
   duration_seconds: number;
@@ -68,6 +71,7 @@ export interface Message {
   model: string | null;
   tokens: TokenUsage;
   tools: ToolUse[];
+  tool_names: string;
   has_tool_result: boolean;
   is_error: boolean;
   session_id: string;
@@ -204,6 +208,43 @@ export interface ErrorEntry {
 export interface ErrorsResponse {
   errors: ErrorEntry[];
   total: number;
+}
+
+// Message filter types
+export interface ToolFilterOption {
+  name: string;
+  count: number;
+}
+
+export interface MessageFilterOptions {
+  types: string[];
+  tools: ToolFilterOption[];
+  error_count: number;
+}
+
+// Message detail types
+export interface MessageDetailResponse {
+  uuid: string;
+  message_id: string | null;
+  type: string;
+  timestamp: string;
+  content: string | null;
+  model: string | null;
+  tokens: TokenUsage;
+  tools: ToolUse[];
+  tool_results: ToolResult[];
+  is_error: boolean;
+  session_id: string;
+  cwd: string | null;
+  message_index: number;
+  total_messages: number;
+}
+
+export interface ToolResult {
+  type: string;
+  tool_use_id: string;
+  content: unknown;
+  is_error?: boolean;
 }
 
 // Pricing types

@@ -1,14 +1,21 @@
 """DuckDB database connection management."""
 
-import json
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
+from re import compile as re_compile
 
 import duckdb
+import orjson
 
 CLAUDE_DIR = Path.home() / ".claude"
 PROJECTS_DIR = CLAUDE_DIR / "projects"
+UUID_PATTERN = re_compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+
+def is_valid_uuid(val: str) -> bool:
+    """Check if a string is a valid UUID."""
+    return bool(UUID_PATTERN.match(val))
 
 
 @contextmanager
@@ -33,31 +40,57 @@ def get_session_path(project_hash: str, session_id: str) -> Path:
 
 
 def get_subagent_path(project_hash: str, agent_id: str) -> Path:
-    """Get path to a subagent JSONL file."""
-    # Agent files are in the same directory as session files, named agent-{id}.jsonl
-    return PROJECTS_DIR / project_hash / f"agent-{agent_id}.jsonl"
+    """Get path to a subagent JSONL file (agent-{id}.jsonl).
+
+    Searches in multiple locations:
+    1. {project_dir}/{session_id}/subagents/agent-{id}.jsonl (new structure)
+    2. {project_dir}/agent-{id}.jsonl (old structure)
+    """
+    project_dir = get_project_dir(project_hash)
+    agent_filename = f"agent-{agent_id}.jsonl"
+
+    # Search in session subdirectories (new structure)
+    for session_dir in project_dir.iterdir():
+        if session_dir.is_dir():
+            subagents_dir = session_dir / "subagents"
+            if subagents_dir.exists():
+                agent_path = subagents_dir / agent_filename
+                if agent_path.exists():
+                    return agent_path
+
+    # Fall back to old structure (direct in project dir)
+    return project_dir / agent_filename
 
 
 def get_subagent_files_for_session(project_hash: str, session_id: str) -> list[Path]:
     """Find all subagent files that belong to a session.
 
-    Subagent files have a sessionId field in their first line that matches
-    the parent session's UUID.
+    Checks both:
+    1. {project_dir}/{session_id}/subagents/ directory (new structure)
+    2. Files in project_dir with matching sessionId (old structure)
     """
     project_dir = get_project_dir(project_hash)
     if not project_dir.exists():
         return []
 
     subagent_files = []
+
+    # Check new structure: {session_id}/subagents/
+    session_subagents_dir = project_dir / session_id / "subagents"
+    if session_subagents_dir.exists():
+        for agent_file in session_subagents_dir.glob("agent-*.jsonl"):
+            subagent_files.append(agent_file)
+
+    # Also check old structure: files directly in project_dir
     for agent_file in project_dir.glob("agent-*.jsonl"):
         try:
-            with open(agent_file) as f:
+            with open(agent_file, "rb") as f:
                 first_line = f.readline()
                 if first_line:
-                    data = json.loads(first_line)
+                    data = orjson.loads(first_line)
                     if data.get("sessionId") == session_id:
                         subagent_files.append(agent_file)
-        except (json.JSONDecodeError, OSError):
+        except (orjson.JSONDecodeError, OSError):
             continue
 
     return subagent_files
@@ -79,15 +112,13 @@ def list_projects() -> list[dict[str, str]]:
             continue
 
         project_path = _get_project_path_from_index(project_dir)
-        session_count = len(list(project_dir.glob("*.jsonl")))
+        session_count = len(list_sessions(project_dir.name))
 
-        projects.append(
-            {
-                "path_hash": project_dir.name,
-                "project_path": project_path,
-                "session_count": session_count,
-            }
-        )
+        projects.append({
+            "path_hash": project_dir.name,
+            "project_path": project_path,
+            "session_count": session_count,
+        })
 
     return projects
 
@@ -96,40 +127,62 @@ def _get_project_path_from_index(project_dir: Path) -> str:
     """Extract project path from sessions-index.json or JSONL files."""
     index_path = project_dir / "sessions-index.json"
 
-    # Try sessions-index.json first
     if index_path.exists():
-        try:
-            with open(index_path) as f:
-                index_data = json.load(f)
-                # Handle new format: { version: 1, entries: [...] }
-                if isinstance(index_data, dict) and "entries" in index_data:
-                    entries = index_data.get("entries", [])
-                    if entries and isinstance(entries, list):
-                        return entries[0].get("projectPath", "Unknown")
-                # Handle legacy format: [...]
-                elif isinstance(index_data, list) and index_data:
-                    return index_data[0].get("projectPath", index_data[0].get("directory", "Unknown"))
-        except (json.JSONDecodeError, KeyError):
-            pass
+        project_path = _extract_project_path_from_index(index_path)
+        if project_path:
+            return project_path
 
-    # Fallback: read cwd from JSONL files (exclude agent-* files)
-    jsonl_files = [f for f in project_dir.glob("*.jsonl") if not f.name.startswith("agent-")]
-    for jsonl_file in jsonl_files[:5]:  # Try first 5 files
+    return _extract_project_path_from_jsonl(project_dir)
+
+
+def _extract_project_path_from_index(index_path: Path) -> str | None:
+    """Extract project path from sessions-index.json file."""
+    try:
+        with open(index_path, "rb") as f:
+            index_data = orjson.loads(f.read())
+    except (orjson.JSONDecodeError, OSError):
+        return None
+
+    entries = _extract_index_entries(index_data)
+    if not entries:
+        return None
+
+    first_entry = entries[0]
+    return first_entry.get("projectPath") or first_entry.get("directory")
+
+
+def _extract_project_path_from_jsonl(project_dir: Path) -> str:
+    """Extract project path from JSONL files by reading cwd field."""
+    jsonl_files = [
+        f for f in project_dir.glob("*.jsonl")
+        if not f.name.startswith("agent-")
+    ]
+
+    for jsonl_file in jsonl_files[:5]:
         try:
-            with open(jsonl_file) as f:
+            with open(jsonl_file, "rb") as f:
                 for i, line in enumerate(f):
-                    if i > 20:  # Only check first 20 lines
+                    if i > 20:
                         break
                     try:
-                        data = json.loads(line)
-                        if "cwd" in data and data["cwd"]:
-                            return data["cwd"]
-                    except json.JSONDecodeError:
+                        data = orjson.loads(line)
+                        if cwd := data.get("cwd"):
+                            return cwd
+                    except orjson.JSONDecodeError:
                         continue
         except OSError:
             continue
 
     return "Unknown"
+
+
+def _extract_index_entries(index_data: dict | list) -> list[dict]:
+    """Extract entries from index data, handling both new and legacy formats."""
+    if isinstance(index_data, dict) and "entries" in index_data:
+        return index_data.get("entries", [])
+    if isinstance(index_data, list):
+        return index_data
+    return []
 
 
 def list_sessions(project_hash: str) -> list[dict[str, str]]:
@@ -142,11 +195,10 @@ def list_sessions(project_hash: str) -> list[dict[str, str]]:
     if sessions:
         return sessions
 
-    # Fallback: list JSONL files (exclude agent-* subagent files)
     return [
         {"session_id": f.stem, "slug": None, "directory": str(project_dir)}
         for f in project_dir.glob("*.jsonl")
-        if not f.name.startswith("agent-")
+        if not f.name.startswith("agent-") and is_valid_uuid(f.stem)
     ]
 
 
@@ -157,26 +209,17 @@ def _get_sessions_from_index(project_hash: str) -> list[dict[str, str]]:
         return []
 
     try:
-        with open(index_path) as f:
-            index_data = json.load(f)
+        with open(index_path, "rb") as f:
+            index_data = orjson.loads(f.read())
+    except (orjson.JSONDecodeError, OSError):
+        return []
 
-            # Handle new format: { version: 1, entries: [...] }
-            entries = []
-            if isinstance(index_data, dict) and "entries" in index_data:
-                entries = index_data.get("entries", [])
-            # Handle legacy format: [...]
-            elif isinstance(index_data, list):
-                entries = index_data
-
-            return [
-                {
-                    "session_id": info.get("sessionId", info.get("id", "")),
-                    "slug": info.get("slug", ""),
-                    "directory": info.get("projectPath", info.get("directory", "")),
-                }
-                for info in entries
-            ]
-    except (json.JSONDecodeError, KeyError):
-        pass
-
-    return []
+    entries = _extract_index_entries(index_data)
+    return [
+        {
+            "session_id": entry.get("sessionId") or entry.get("id", ""),
+            "slug": entry.get("slug", ""),
+            "directory": entry.get("projectPath") or entry.get("directory", ""),
+        }
+        for entry in entries
+    ]

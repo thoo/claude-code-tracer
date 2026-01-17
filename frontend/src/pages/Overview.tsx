@@ -146,9 +146,6 @@ export default function Overview() {
                 <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                   Last Activity
                 </th>
-                <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
-                  Actions
-                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -173,12 +170,12 @@ function ProjectRow({ project }: ProjectRowProps) {
   return (
     <tr className="transition-colors hover:bg-gray-50/50">
       <td className="px-6 py-4">
-        <div>
-          <div className="font-medium text-gray-900">{projectName}</div>
+        <Link to={`/project/${project.path_hash}`} className="block group">
+          <div className="font-medium text-gray-900 group-hover:text-primary-600">{projectName}</div>
           <div className="text-sm text-gray-500 truncate max-w-xs" title={project.project_path}>
             {project.project_path}
           </div>
-        </div>
+        </Link>
       </td>
       <td className="px-6 py-4 text-sm text-gray-700">{project.session_count}</td>
       <td className="px-6 py-4 text-sm text-gray-700">
@@ -192,17 +189,6 @@ function ProjectRow({ project }: ProjectRowProps) {
         <div title={formatDate(project.last_activity)}>
           {formatRelativeTime(project.last_activity)}
         </div>
-      </td>
-      <td className="px-6 py-4 text-right">
-        <Link
-          to={`/project/${project.path_hash}`}
-          className="inline-flex items-center gap-1 text-sm font-medium text-primary-600 hover:text-primary-700"
-        >
-          View
-          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-          </svg>
-        </Link>
       </td>
     </tr>
   );

@@ -1,16 +1,20 @@
 """Session-related API endpoints."""
 
+from datetime import UTC, datetime
 from pathlib import Path
 
+import orjson
 from fastapi import APIRouter, HTTPException, Query
 
-from ..models.entries import TokenUsage
+from ..models.entries import TokenUsage, ToolUse
 from ..models.responses import (
     CodeChangesResponse,
     CommandsResponse,
     CommandsSummary,
     CostBreakdown,
     ErrorsResponse,
+    MessageDetailResponse,
+    MessageFilterOptions,
     MessageListResponse,
     MessageResponse,
     ProjectListResponse,
@@ -20,6 +24,7 @@ from ..models.responses import (
     SessionSummary,
     SkillsResponse,
     SubagentListResponse,
+    ToolFilterOption,
     ToolUsageResponse,
     ToolUsageStats,
     UserCommand,
@@ -35,7 +40,14 @@ from ..services.log_parser import (
     get_session_tool_usage,
     parse_session_summary,
 )
-from ..services.queries import MESSAGES_PAGINATED_QUERY, USER_COMMANDS_QUERY
+from ..services.queries import (
+    ERROR_COUNT_QUERY,
+    MESSAGE_BY_INDEX_QUERY,
+    MESSAGE_DETAIL_QUERY,
+    MESSAGES_COMPREHENSIVE_QUERY,
+    TOOL_NAMES_LIST_QUERY,
+    USER_COMMANDS_QUERY,
+)
 
 router = APIRouter(prefix="/api", tags=["sessions"])
 
@@ -77,7 +89,12 @@ async def get_projects() -> ProjectListResponse:
         )
 
     # Sort by last activity, most recent first
-    projects.sort(key=lambda p: p.last_activity or p.first_activity, reverse=True)
+    projects.sort(
+        key=lambda p: p.last_activity
+        or p.first_activity
+        or datetime.min.replace(tzinfo=UTC),
+        reverse=True,
+    )
 
     return ProjectListResponse(projects=projects)
 
@@ -225,37 +242,66 @@ async def get_session_messages(
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=50, ge=1, le=100),
     type_filter: str | None = Query(default=None, alias="type"),
+    tool_filter: str | None = Query(default=None, alias="tool"),
+    error_only: bool = Query(default=False),
+    search: str | None = Query(default=None),
 ) -> MessageListResponse:
-    """Get paginated messages for a session."""
+    """Get paginated messages for a session with filtering.
+
+    Supports filtering by:
+    - type: 'assistant', 'user', 'hook', or 'tool_result'
+    - tool: filter by tool name (for assistant messages with that tool)
+    - error_only: only show messages with errors (tool_result messages)
+    - search: text search in message content (case-insensitive)
+    """
     session_path = require_session_path(project_hash, session_id)
 
-    type_filter_sql = f"AND type = '{type_filter}'" if type_filter else ""
+    # Build WHERE clause for filtering
+    where_conditions = []
+    if type_filter:
+        where_conditions.append(f"msg_type = '{type_filter}'")
+    if tool_filter:
+        where_conditions.append(f"tool_names LIKE '%{tool_filter}%'")
+    if error_only:
+        where_conditions.append("is_error = true")
+    if search:
+        # Escape single quotes in search term and do case-insensitive search
+        escaped_search = search.replace("'", "''")
+        where_conditions.append(f"LOWER(CAST(message AS VARCHAR)) LIKE LOWER('%{escaped_search}%')")
+
+    where_clause = ""
+    if where_conditions:
+        where_clause = "WHERE " + " AND ".join(where_conditions)
+
     offset = (page - 1) * per_page
 
     with get_connection() as conn:
         try:
-            query = MESSAGES_PAGINATED_QUERY.format(
+            # Get paginated messages using comprehensive query
+            query = MESSAGES_COMPREHENSIVE_QUERY.format(
                 path=str(session_path),
                 sort_dir="ASC",
-                type_filter=type_filter_sql,
-                offset=offset,
-                limit=per_page,
+                where_clause=where_clause,
             )
-            result = conn.execute(query).fetchall()
+            # Add pagination
+            paginated_query = f"""
+            WITH comprehensive AS ({query})
+            SELECT * FROM comprehensive
+            WHERE row_num > {offset}
+            LIMIT {per_page}
+            """
+            result = conn.execute(paginated_query).fetchall()
 
+            # Get total count for pagination
             count_query = f"""
-            SELECT COUNT(*) FROM read_json_auto('{session_path}',
-                maximum_object_size=104857600,
-                ignore_errors=true
-            )
-            WHERE type IN ('assistant', 'user')
-            {type_filter_sql}
+            WITH comprehensive AS ({query})
+            SELECT COUNT(*) FROM comprehensive
             """
             total = conn.execute(count_query).fetchone()[0]
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e)) from e
 
-    messages = [_parse_message_row(row) for row in result]
+    messages = [_parse_comprehensive_message_row(row) for row in result]
     total_pages = (total + per_page - 1) // per_page
 
     return MessageListResponse(
@@ -267,38 +313,292 @@ async def get_session_messages(
     )
 
 
-def _parse_message_row(row: tuple) -> MessageResponse:
-    """Parse a database row into a MessageResponse."""
-    msg_content = row[3]
-    content_text = _extract_content_text(msg_content)
+@router.get("/sessions/{project_hash}/{session_id}/messages/filters", response_model=MessageFilterOptions)
+async def get_session_message_filters(
+    project_hash: str,
+    session_id: str,
+) -> MessageFilterOptions:
+    """Get available filter options for session messages."""
+    session_path = require_session_path(project_hash, session_id)
 
-    tokens = TokenUsage()
-    if row[5]:
-        tokens = TokenUsage(
-            input_tokens=row[5].get("input_tokens", 0),
-            output_tokens=row[5].get("output_tokens", 0),
-            cache_creation_input_tokens=row[5].get("cache_creation_input_tokens", 0),
-            cache_read_input_tokens=row[5].get("cache_read_input_tokens", 0),
-        )
+    with get_connection() as conn:
+        try:
+            # Get tool names with counts
+            tools_result = conn.execute(
+                TOOL_NAMES_LIST_QUERY.format(path=str(session_path))
+            ).fetchall()
+            tools = [ToolFilterOption(name=row[0], count=row[1]) for row in tools_result]
 
-    return MessageResponse(
-        uuid=row[0],
-        type=row[1],
-        timestamp=row[2],
-        content=content_text[:500] if content_text else None,
-        model=row[4],
-        tokens=tokens,
-        tools=[],
-        has_tool_result=False,
-        is_error=False,
-        session_id=row[6],
+            # Get error count
+            error_result = conn.execute(
+                ERROR_COUNT_QUERY.format(path=str(session_path))
+            ).fetchone()
+            error_count = error_result[0] if error_result else 0
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    return MessageFilterOptions(
+        types=["assistant", "user", "hook", "tool_result"],
+        tools=tools,
+        error_count=error_count,
     )
 
 
-def _extract_content_text(msg_content: dict | None) -> str:
-    """Extract text content from a message content object."""
-    if not isinstance(msg_content, dict):
+@router.get(
+    "/sessions/{project_hash}/{session_id}/messages/{message_uuid}",
+    response_model=MessageDetailResponse,
+)
+async def get_message_detail(
+    project_hash: str,
+    session_id: str,
+    message_uuid: str,
+) -> MessageDetailResponse:
+    """Get detailed information about a specific message."""
+    session_path = require_session_path(project_hash, session_id)
+
+    with get_connection() as conn:
+        try:
+            result = conn.execute(
+                MESSAGE_DETAIL_QUERY.format(path=str(session_path), uuid=message_uuid)
+            ).fetchone()
+
+            if not result:
+                raise HTTPException(status_code=404, detail="Message not found")
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    return _parse_message_detail_row(result)
+
+
+@router.get(
+    "/sessions/{project_hash}/{session_id}/messages/by-index/{index}",
+    response_model=MessageDetailResponse,
+)
+async def get_message_by_index(
+    project_hash: str,
+    session_id: str,
+    index: int,
+) -> MessageDetailResponse:
+    """Get message by its index (1-based) for prev/next navigation."""
+    session_path = require_session_path(project_hash, session_id)
+
+    with get_connection() as conn:
+        try:
+            result = conn.execute(
+                MESSAGE_BY_INDEX_QUERY.format(path=str(session_path), index=index)
+            ).fetchone()
+
+            if not result:
+                raise HTTPException(status_code=404, detail="Message not found")
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    return _parse_message_detail_row(result)
+
+
+def _parse_assistant_content(raw_content: str | list) -> tuple[str | None, list[ToolUse]]:
+    """Extract text content and tool uses from assistant message content."""
+    if isinstance(raw_content, str):
+        return raw_content, []
+
+    if not isinstance(raw_content, list):
+        return None, []
+
+    text_parts = []
+    tools = []
+    for block in raw_content:
+        if not isinstance(block, dict):
+            continue
+        block_type = block.get("type")
+        if block_type == "text":
+            text_parts.append(block.get("text", ""))
+        elif block_type == "tool_use":
+            tools.append(
+                ToolUse(
+                    type="tool_use",
+                    id=block.get("id", ""),
+                    name=block.get("name", ""),
+                    input=block.get("input", {}),
+                )
+            )
+
+    content = "\n".join(text_parts) if text_parts else None
+    return content, tools
+
+
+def _parse_user_content(raw_content: str | list | None) -> tuple[str | None, list[dict], bool]:
+    """Extract text content, tool results, and error status from user message content."""
+    if isinstance(raw_content, str):
+        return raw_content, [], False
+
+    if not isinstance(raw_content, list):
+        return None, [], False
+
+    content = None
+    tool_results = []
+    is_error = False
+
+    for block in raw_content:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "tool_result":
+            tool_results.append(block)
+            if block.get("is_error"):
+                is_error = True
+        elif isinstance(block.get("text"), str):
+            content = block.get("text")
+
+    if not content and not tool_results:
+        content = str(raw_content)
+
+    return content, tool_results, is_error
+
+
+def _parse_message_detail_row(row: tuple) -> MessageDetailResponse:
+    """Parse a message detail query row into MessageDetailResponse.
+
+    Row format:
+    - row[0]: uuid
+    - row[1]: type
+    - row[2]: timestamp
+    - row[3]: message (dict)
+    - row[4]: session_id
+    - row[5]: cwd
+    - row[6]: row_num (1-based index)
+    - row[7]: total count
+    """
+    msg = row[3] or {}
+    msg_type = row[1]
+
+    if msg_type == "assistant":
+        content, tools = _parse_assistant_content(msg.get("content", []))
+        return MessageDetailResponse(
+            uuid=str(row[0]),
+            message_id=msg.get("id"),
+            type=msg_type,
+            timestamp=row[2],
+            content=content,
+            model=msg.get("model"),
+            tokens=_parse_usage_data(msg.get("usage")),
+            tools=tools,
+            tool_results=[],
+            is_error=False,
+            session_id=str(row[4]),
+            cwd=row[5],
+            message_index=row[6],
+            total_messages=row[7],
+        )
+
+    content, tool_results, is_error = _parse_user_content(msg.get("content"))
+    return MessageDetailResponse(
+        uuid=str(row[0]),
+        message_id=None,
+        type=msg_type,
+        timestamp=row[2],
+        content=content,
+        model=None,
+        tokens=TokenUsage(),
+        tools=[],
+        tool_results=tool_results,
+        is_error=is_error,
+        session_id=str(row[4]),
+        cwd=row[5],
+        message_index=row[6],
+        total_messages=row[7],
+    )
+
+
+def _parse_usage_data(usage_data: str | dict | None) -> TokenUsage:
+    """Parse usage data into TokenUsage, handling both string and dict formats."""
+    if not usage_data:
+        return TokenUsage()
+
+    if isinstance(usage_data, str):
+        try:
+            usage_data = orjson.loads(usage_data)
+        except orjson.JSONDecodeError:
+            return TokenUsage()
+
+    if not isinstance(usage_data, dict):
+        return TokenUsage()
+
+    return TokenUsage(
+        input_tokens=usage_data.get("input_tokens", 0),
+        output_tokens=usage_data.get("output_tokens", 0),
+        cache_creation_input_tokens=usage_data.get("cache_creation_input_tokens", 0),
+        cache_read_input_tokens=usage_data.get("cache_read_input_tokens", 0),
+    )
+
+
+def _parse_comprehensive_message_row(row: tuple) -> MessageResponse:
+    """Parse a comprehensive query row into a MessageResponse.
+
+    Row format from MESSAGES_COMPREHENSIVE_QUERY:
+    - row[0]: uuid
+    - row[1]: msg_type (assistant, user, tool_result, subagent)
+    - row[2]: timestamp
+    - row[3]: message
+    - row[4]: model
+    - row[5]: usage
+    - row[6]: session_id
+    - row[7]: tool_names
+    - row[8]: is_error
+    - row[9]: row_num
+    """
+    msg_type = row[1]
+
+    # For subagent messages, the content is already a JSON string from DuckDB's json_object()
+    if msg_type == "subagent":
+        content_text = row[3] if row[3] else None
+    else:
+        content_text = _extract_content_text(row[3])
+
+    # Don't truncate subagent content as it needs to be valid JSON for frontend parsing
+    if msg_type == "subagent":
+        truncated_content = content_text
+    else:
+        truncated_content = content_text[:500] if content_text else None
+
+    return MessageResponse(
+        uuid=str(row[0]),
+        type=msg_type,
+        timestamp=row[2],
+        content=truncated_content,
+        model=row[4],
+        tokens=_parse_usage_data(row[5]),
+        tools=[],
+        tool_names=row[7] or "",
+        has_tool_result=msg_type == "tool_result",
+        is_error=bool(row[8]),
+        session_id=str(row[6]),
+    )
+
+
+def _extract_content_text(msg_content: dict | str | None) -> str:
+    """Extract text content from a message content object.
+
+    Handles both dict (parsed) and string (JSON) message formats.
+    Extracts content from text, tool_result, and tool_use blocks.
+    """
+    if msg_content is None:
         return ""
+
+    # If it's a string, try to parse it as JSON
+    if isinstance(msg_content, str):
+        try:
+            msg_content = orjson.loads(msg_content)
+        except (orjson.JSONDecodeError, ValueError):
+            # If it's not valid JSON, return the string directly
+            return msg_content[:500]
+
+    if not isinstance(msg_content, dict):
+        return str(msg_content)[:500] if msg_content else ""
 
     raw_content = msg_content.get("content")
     if isinstance(raw_content, str):
@@ -307,11 +607,57 @@ def _extract_content_text(msg_content: dict | None) -> str:
     if isinstance(raw_content, list):
         text_parts = []
         for block in raw_content:
-            if isinstance(block, dict) and block.get("type") == "text":
-                text_parts.append(block.get("text", "")[:200])
-            elif isinstance(block, str):
+            if isinstance(block, str):
                 text_parts.append(block[:200])
-        return "".join(text_parts)
+                continue
+            if not isinstance(block, dict):
+                continue
+
+            block_type = block.get("type")
+            if block_type == "text":
+                # Text block from assistant or user
+                text_parts.append(block.get("text", "")[:200])
+            elif block_type == "thinking":
+                # Thinking block from assistant - show preview
+                thinking_text = block.get("thinking", "")[:150]
+                if thinking_text:
+                    text_parts.append(f"[Thinking: {thinking_text}...]")
+            elif block_type == "tool_result":
+                # Tool result block - extract the content
+                result_content = block.get("content")
+                if isinstance(result_content, str):
+                    text_parts.append(result_content[:200])
+                elif isinstance(result_content, list):
+                    # Handle nested content blocks in tool results
+                    for sub_block in result_content:
+                        if isinstance(sub_block, dict) and sub_block.get("type") == "text":
+                            text_parts.append(sub_block.get("text", "")[:100])
+                        elif isinstance(sub_block, str):
+                            text_parts.append(sub_block[:100])
+            elif block_type == "tool_use":
+                # Tool use block - show tool name and brief input preview
+                tool_name = block.get("name", "unknown")
+                tool_input = block.get("input", {})
+                if isinstance(tool_input, dict):
+                    # Extract meaningful fields for common tools
+                    preview = ""
+                    if "file_path" in tool_input:
+                        preview = tool_input["file_path"]
+                    elif "command" in tool_input:
+                        preview = tool_input["command"][:100]
+                    elif "pattern" in tool_input:
+                        preview = tool_input["pattern"]
+                    elif "query" in tool_input:
+                        preview = tool_input["query"][:100]
+                    elif "prompt" in tool_input:
+                        preview = tool_input["prompt"][:50]
+                    if preview:
+                        text_parts.append(f"[{tool_name}: {preview}]")
+                    else:
+                        text_parts.append(f"[{tool_name}]")
+
+        if text_parts:
+            return " ".join(text_parts)
 
     return ""
 

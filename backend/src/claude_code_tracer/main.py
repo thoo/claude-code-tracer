@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import ORJSONResponse
 from loguru import logger
 
 from .routers import metrics, sessions, subagents
@@ -12,12 +13,10 @@ from .services.metrics import init_pricing
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan handler for startup/shutdown events."""
-    # Startup
+    """Handle application startup and shutdown events."""
     logger.info("Starting Claude Code Tracer API")
     init_pricing()
     yield
-    # Shutdown
     logger.info("Shutting down Claude Code Tracer API")
 
 
@@ -26,13 +25,13 @@ app = FastAPI(
     description="Analytics dashboard API for Claude Code sessions",
     version="0.1.0",
     lifespan=lifespan,
+    default_response_class=ORJSONResponse,
 )
 
-# Configure CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:5173",  # Vite dev server
+        "http://localhost:5173",
         "http://localhost:3000",
         "http://127.0.0.1:5173",
         "http://127.0.0.1:3000",
@@ -42,7 +41,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
 app.include_router(sessions.router)
 app.include_router(metrics.router)
 app.include_router(subagents.router)

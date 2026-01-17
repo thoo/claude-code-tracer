@@ -4,11 +4,12 @@ import {
   useSession,
   useSessionMetrics,
   useSessionMessages,
+  useSessionMessageFilters,
   useSessionTools,
-  useSessionSubagents,
   useSessionSkills,
   useSessionCodeChanges,
   useSessionCommands,
+  useSubagentDetail,
 } from '../hooks/useApi';
 import {
   formatCost,
@@ -24,8 +25,9 @@ import StatsCard from '../components/common/StatsCard';
 import Badge from '../components/common/Badge';
 import Pagination from '../components/common/Pagination';
 import ToolUsageChart from '../components/charts/ToolUsageChart';
+import MessageDetailModal from '../components/MessageDetailModal';
 
-type TabType = 'messages' | 'tools' | 'commands' | 'subagents' | 'code';
+type TabType = 'messages' | 'tools' | 'commands' | 'code';
 
 export default function SessionDetail() {
   const { projectHash, sessionId } = useParams<{ projectHash: string; sessionId: string }>();
@@ -154,7 +156,7 @@ export default function SessionDetail() {
       {/* Tabs */}
       <div className="border-b border-gray-200">
         <nav className="-mb-px flex gap-4 overflow-x-auto">
-          {(['messages', 'tools', 'commands', 'subagents', 'code'] as const).map((tab) => (
+          {(['messages', 'tools', 'commands', 'code'] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -185,9 +187,6 @@ export default function SessionDetail() {
       {activeTab === 'commands' && (
         <CommandsTab projectHash={projectHash || ''} sessionId={sessionId || ''} />
       )}
-      {activeTab === 'subagents' && (
-        <SubagentsTab projectHash={projectHash || ''} sessionId={sessionId || ''} />
-      )}
       {activeTab === 'code' && (
         <CodeChangesTab projectHash={projectHash || ''} sessionId={sessionId || ''} />
       )}
@@ -200,47 +199,358 @@ interface TabProps {
   sessionId: string;
 }
 
-function MessagesTab({ projectHash, sessionId, page, onPageChange }: TabProps & { page: number; onPageChange: (p: number) => void }) {
-  const { data, isLoading } = useSessionMessages(projectHash, sessionId, { page, perPage: 20 });
+interface SubagentData {
+  agentId?: string;
+  subagent_type?: string;
+  description?: string;
+  prompt?: string;
+}
 
-  if (isLoading) return <LoadingSpinner />;
+function MessagesTab({ projectHash, sessionId, page, onPageChange }: TabProps & { page: number; onPageChange: (p: number) => void }) {
+  const [typeFilter, setTypeFilter] = useState<string>('');
+  const [toolFilter, setToolFilter] = useState<string>('');
+  const [errorOnly, setErrorOnly] = useState(false);
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [selectedMessageUuid, setSelectedMessageUuid] = useState<string | null>(null);
+  const [selectedSubagent, setSelectedSubagent] = useState<{ data: SubagentData; timestamp: string } | null>(null);
+
+  const { data: filterOptions } = useSessionMessageFilters(projectHash, sessionId);
+  const { data, isLoading } = useSessionMessages(projectHash, sessionId, {
+    page,
+    perPage: 20,
+    type: typeFilter || undefined,
+    tool: toolFilter || undefined,
+    errorOnly: errorOnly || undefined,
+    search: searchQuery || undefined,
+  });
 
   const messages = data?.messages || [];
 
   return (
     <div className="space-y-4">
-      <div className="card overflow-hidden !p-0">
-        <div className="divide-y divide-gray-100">
-          {messages.map((msg) => (
-            <div key={msg.uuid} className="px-6 py-4">
-              <div className="flex items-start gap-4">
-                <Badge variant={msg.type === 'assistant' ? 'primary' : 'gray'}>
-                  {msg.type}
-                </Badge>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm text-gray-900">
-                    {truncateText(msg.content || '[No content]', 300)}
-                  </p>
-                  <div className="mt-2 flex items-center gap-4 text-xs text-gray-500">
-                    <span>{formatDateTime(msg.timestamp)}</span>
-                    {msg.model && <span>{msg.model}</span>}
-                    {getTotalTokens(msg.tokens) > 0 && (
-                      <span>{formatTokens(getTotalTokens(msg.tokens))} tokens</span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          ))}
+      {/* Filter bar */}
+      <div className="flex flex-wrap items-center gap-4">
+        {/* Type filter */}
+        <div className="flex items-center gap-2">
+          <label htmlFor="type-filter" className="text-sm font-medium text-gray-700">
+            Type:
+          </label>
+          <select
+            id="type-filter"
+            value={typeFilter}
+            onChange={(e) => {
+              setTypeFilter(e.target.value);
+              onPageChange(1);
+            }}
+            className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+          >
+            <option value="">All types</option>
+            {filterOptions?.types.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
         </div>
+
+        {/* Tool filter */}
+        {filterOptions && filterOptions.tools.length > 0 && (
+          <div className="flex items-center gap-2">
+            <label htmlFor="tool-filter" className="text-sm font-medium text-gray-700">
+              Tool:
+            </label>
+            <select
+              id="tool-filter"
+              value={toolFilter}
+              onChange={(e) => {
+                setToolFilter(e.target.value);
+                onPageChange(1);
+              }}
+              className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+            >
+              <option value="">All tools</option>
+              {filterOptions.tools.map((t) => (
+                <option key={t.name} value={t.name}>
+                  {t.name} ({t.count})
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* Error only toggle */}
+        {filterOptions && filterOptions.error_count > 0 && (
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={errorOnly}
+              onChange={(e) => {
+                setErrorOnly(e.target.checked);
+                onPageChange(1);
+              }}
+              className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+            />
+            <span className="text-sm font-medium text-gray-700">
+              Errors only ({filterOptions.error_count})
+            </span>
+          </label>
+        )}
+
+        {/* Search input */}
+        <div className="flex items-center gap-2">
+          <label htmlFor="search-input" className="text-sm font-medium text-gray-700">
+            Search:
+          </label>
+          <input
+            id="search-input"
+            type="text"
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              onPageChange(1);
+            }}
+            placeholder="Search message content..."
+            className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 w-64"
+          />
+        </div>
+
+        {/* Clear filters */}
+        {(typeFilter || toolFilter || errorOnly || searchQuery) && (
+          <button
+            onClick={() => {
+              setTypeFilter('');
+              setToolFilter('');
+              setErrorOnly(false);
+              setSearchQuery('');
+              onPageChange(1);
+            }}
+            className="text-sm text-gray-500 hover:text-gray-700 underline"
+          >
+            Clear filters
+          </button>
+        )}
       </div>
-      {data && data.total_pages > 1 && (
-        <Pagination
-          currentPage={page}
-          totalPages={data.total_pages}
-          onPageChange={onPageChange}
+
+      {isLoading ? (
+        <LoadingSpinner />
+      ) : messages.length === 0 ? (
+        <div className="card text-center text-gray-500 py-8">
+          No messages found{(typeFilter || toolFilter || errorOnly || searchQuery) ? ' matching filters' : ''}
+        </div>
+      ) : (
+        <>
+          <div className="card overflow-hidden !p-0">
+            <div className="divide-y divide-gray-100">
+              {messages.map((msg) => {
+                // Parse subagent content if it's a subagent message
+                const isSubagent = msg.type === 'subagent';
+                let subagentData: { agentId?: string; subagent_type?: string; description?: string; prompt?: string } | null = null;
+                if (isSubagent && msg.content) {
+                  try {
+                    subagentData = typeof msg.content === 'string' ? JSON.parse(msg.content) : msg.content;
+                  } catch {
+                    subagentData = null;
+                  }
+                }
+
+                return (
+                  <div
+                    key={msg.uuid}
+                    className={`px-6 py-4 cursor-pointer transition-colors hover:bg-gray-50 ${msg.is_error ? 'bg-red-50 hover:bg-red-100' : ''} ${isSubagent ? 'bg-purple-50/50 hover:bg-purple-100/50' : ''}`}
+                    onClick={() => {
+                      if (isSubagent && subagentData) {
+                        setSelectedSubagent({ data: subagentData, timestamp: msg.timestamp });
+                      } else {
+                        setSelectedMessageUuid(msg.uuid);
+                      }
+                    }}
+                  >
+                    <div className="flex items-start gap-4">
+                      <div className="flex flex-col gap-1">
+                        <Badge variant={msg.type === 'assistant' ? 'primary' : msg.type === 'subagent' ? 'secondary' : msg.type === 'tool_result' ? 'warning' : msg.type === 'hook' ? 'gray' : 'gray'}>
+                          {msg.type}
+                        </Badge>
+                        {msg.is_error && <Badge variant="error">error</Badge>}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        {isSubagent && subagentData ? (
+                          <>
+                            <div className="flex items-center gap-2 mb-1">
+                              <Badge variant="primary">{subagentData.subagent_type || 'unknown'}</Badge>
+                              {subagentData.description && (
+                                <span className="text-sm font-medium text-gray-900">{subagentData.description}</span>
+                              )}
+                            </div>
+                            {subagentData.prompt && (
+                              <p className="text-sm text-gray-600">
+                                {truncateText(subagentData.prompt, 200)}
+                              </p>
+                            )}
+                          </>
+                        ) : (
+                          <p className="text-sm text-gray-900">
+                            {truncateText(msg.content || '[No content]', 300)}
+                          </p>
+                        )}
+                        <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-gray-500">
+                          <span>{formatDateTime(msg.timestamp)}</span>
+                          {msg.model && <span>{msg.model}</span>}
+                          {getTotalTokens(msg.tokens) > 0 && (
+                            <span>{formatTokens(getTotalTokens(msg.tokens))} tokens</span>
+                          )}
+                          {msg.tool_names && !isSubagent && (
+                            <span className="text-primary-600">{msg.tool_names}</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          {data && data.total_pages > 1 && (
+            <Pagination
+              currentPage={page}
+              totalPages={data.total_pages}
+              onPageChange={onPageChange}
+            />
+          )}
+        </>
+      )}
+
+      {/* Message Detail Modal */}
+      {selectedMessageUuid && (
+        <MessageDetailModal
+          projectHash={projectHash}
+          sessionId={sessionId}
+          messageUuid={selectedMessageUuid}
+          onClose={() => setSelectedMessageUuid(null)}
+          onNavigate={(uuid) => setSelectedMessageUuid(uuid)}
         />
       )}
+
+      {/* Subagent Detail Modal */}
+      {selectedSubagent && (
+        <SubagentDetailModal
+          subagent={selectedSubagent.data}
+          timestamp={selectedSubagent.timestamp}
+          projectHash={projectHash}
+          onClose={() => setSelectedSubagent(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function SubagentDetailModal({
+  subagent,
+  timestamp,
+  projectHash,
+  onClose,
+}: {
+  subagent: SubagentData;
+  timestamp: string;
+  projectHash: string;
+  onClose: () => void;
+}) {
+  const { data: details, isLoading } = useSubagentDetail(projectHash, subagent.agentId || '');
+
+  const totalTokens = details ? (
+    details.tokens.input_tokens +
+    details.tokens.output_tokens +
+    details.tokens.cache_creation_input_tokens +
+    details.tokens.cache_read_input_tokens
+  ) : 0;
+
+  const duration = details?.start_time && details?.end_time
+    ? Math.round((new Date(details.end_time).getTime() - new Date(details.start_time).getTime()) / 1000)
+    : null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[80vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
+          <h2 className="text-xl font-semibold text-gray-900">Subagent Details</h2>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600 text-2xl leading-none"
+          >
+            &times;
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+          <div className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-3 text-sm">
+            <span className="text-gray-500 font-medium">Type:</span>
+            <span>
+              <Badge variant="primary">{subagent.subagent_type || 'unknown'}</Badge>
+            </span>
+
+            <span className="text-gray-500 font-medium">Agent ID:</span>
+            <span className="text-gray-900 font-mono text-xs">{subagent.agentId || 'N/A'}</span>
+
+            <span className="text-gray-500 font-medium">Started:</span>
+            <span className="text-gray-900">{formatDateTime(timestamp)}</span>
+
+            {subagent.description && (
+              <>
+                <span className="text-gray-500 font-medium">Description:</span>
+                <span className="text-gray-900">{subagent.description}</span>
+              </>
+            )}
+
+            {/* Additional details from API */}
+            {isLoading ? (
+              <>
+                <span className="text-gray-500 font-medium">Status:</span>
+                <span className="text-gray-400">Loading...</span>
+              </>
+            ) : details && (
+              <>
+                <span className="text-gray-500 font-medium">Status:</span>
+                <span>
+                  <Badge variant={details.status === 'completed' ? 'success' : details.status === 'running' ? 'primary' : 'gray'}>
+                    {details.status}
+                  </Badge>
+                </span>
+
+                {duration !== null && (
+                  <>
+                    <span className="text-gray-500 font-medium">Duration:</span>
+                    <span className="text-gray-900">{formatDuration(duration)}</span>
+                  </>
+                )}
+
+                <span className="text-gray-500 font-medium">Tool Calls:</span>
+                <span className="text-gray-900">{details.tool_calls}</span>
+
+                <span className="text-gray-500 font-medium">Tokens:</span>
+                <span className="text-gray-900">{formatTokens(totalTokens)}</span>
+              </>
+            )}
+          </div>
+
+          {subagent.prompt && (
+            <div className="mt-4">
+              <h3 className="text-sm font-medium text-gray-500 mb-2">Prompt</h3>
+              <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 max-h-64 overflow-y-auto">
+                <pre className="text-sm text-gray-800 whitespace-pre-wrap font-mono leading-relaxed">
+                  {subagent.prompt}
+                </pre>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -332,53 +642,6 @@ function CommandsTab({ projectHash, sessionId }: TabProps) {
           ))}
         </div>
       </div>
-    </div>
-  );
-}
-
-function SubagentsTab({ projectHash, sessionId }: TabProps) {
-  const { data, isLoading } = useSessionSubagents(projectHash, sessionId);
-
-  if (isLoading) return <LoadingSpinner />;
-
-  const subagents = data?.subagents || [];
-
-  if (subagents.length === 0) {
-    return <div className="card text-center text-gray-500 py-8">No subagents spawned in this session</div>;
-  }
-
-  return (
-    <div className="card overflow-hidden !p-0">
-      <table className="w-full">
-        <thead>
-          <tr className="border-b border-gray-100 bg-gray-50/50">
-            <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Type</th>
-            <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Description</th>
-            <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Status</th>
-            <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Tool Calls</th>
-            <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Tokens</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-100">
-          {subagents.map((agent) => (
-            <tr key={agent.agent_id}>
-              <td className="px-6 py-4">
-                <Badge variant="primary">{agent.subagent_type}</Badge>
-              </td>
-              <td className="px-6 py-4 text-sm text-gray-700 max-w-xs truncate">
-                {agent.description || '-'}
-              </td>
-              <td className="px-6 py-4">
-                <Badge variant={agent.status === 'completed' ? 'success' : agent.status === 'error' ? 'error' : 'warning'}>
-                  {agent.status}
-                </Badge>
-              </td>
-              <td className="px-6 py-4 text-gray-700">{agent.tool_calls}</td>
-              <td className="px-6 py-4 text-gray-700">{formatTokens(getTotalTokens(agent.tokens))}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   );
 }

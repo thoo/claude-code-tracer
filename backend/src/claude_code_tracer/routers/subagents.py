@@ -39,34 +39,34 @@ def _get_subagent_type(subagent_path: Path) -> str:
 async def get_subagent(project_hash: str, agent_id: str) -> SubagentResponse:
     """Get details for a specific subagent."""
     subagent_path = require_subagent_path(project_hash, agent_id)
-    path_str = str(subagent_path)
+    path = str(subagent_path)
 
     with get_connection() as conn:
         try:
-            token_result = conn.execute(TOKEN_USAGE_QUERY.format(path=path_str)).fetchone()
+            result = conn.execute(TOKEN_USAGE_QUERY.format(path=path)).fetchone()
             tokens = (
                 TokenUsage(
-                    input_tokens=token_result[0] or 0,
-                    output_tokens=token_result[1] or 0,
-                    cache_creation_input_tokens=token_result[2] or 0,
-                    cache_read_input_tokens=token_result[3] or 0,
+                    input_tokens=result[0] or 0,
+                    output_tokens=result[1] or 0,
+                    cache_creation_input_tokens=result[2] or 0,
+                    cache_read_input_tokens=result[3] or 0,
                 )
-                if token_result
+                if result
                 else TokenUsage()
             )
         except Exception:
             tokens = TokenUsage()
 
         try:
-            tool_result = conn.execute(TOOL_USAGE_QUERY.format(path=path_str)).fetchall()
-            tool_calls = sum(row[1] for row in tool_result)
+            rows = conn.execute(TOOL_USAGE_QUERY.format(path=path)).fetchall()
+            tool_calls = sum(row[1] for row in rows)
         except Exception:
             tool_calls = 0
 
         try:
-            time_result = conn.execute(SESSION_TIMERANGE_QUERY.format(path=path_str)).fetchone()
-            start_time = _parse_timestamp(time_result[0]) if time_result else None
-            end_time = _parse_timestamp(time_result[1]) if time_result else None
+            result = conn.execute(SESSION_TIMERANGE_QUERY.format(path=path)).fetchone()
+            start_time = _parse_timestamp(result[0]) if result else None
+            end_time = _parse_timestamp(result[1]) if result else None
         except Exception:
             start_time = None
             end_time = None
@@ -89,9 +89,18 @@ async def get_subagent_tools(project_hash: str, agent_id: str) -> ToolUsageRespo
 
     with get_connection() as conn:
         try:
-            result = conn.execute(TOOL_USAGE_QUERY.format(path=str(subagent_path))).fetchall()
+            rows = conn.execute(TOOL_USAGE_QUERY.format(path=str(subagent_path))).fetchall()
         except Exception:
             return ToolUsageResponse()
 
-        tools = [ToolUsageStats(name=row[0], count=row[1]) for row in result if row[0]]
+        tools = [
+            ToolUsageStats(
+                name=row[0],
+                count=row[1],
+                avg_duration_seconds=row[2] or 0.0,
+                error_count=row[3] or 0,
+            )
+            for row in rows
+            if row[0]
+        ]
         return ToolUsageResponse(tools=tools, total_calls=sum(t.count for t in tools))
