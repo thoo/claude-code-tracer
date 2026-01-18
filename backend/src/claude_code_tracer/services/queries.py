@@ -13,15 +13,15 @@ _JSON_OPTS = "maximum_object_size=104857600, ignore_errors=true, union_by_name=t
 # Reusable SQL snippet for classifying user messages into subtypes
 _USER_TYPE_CASE = """CASE
             WHEN type = 'user'
-                 AND CAST(message.content AS VARCHAR) NOT LIKE '[{{{{"tool_use_id"%'
-                 AND CAST(message.content AS VARCHAR) NOT LIKE '[{{{{"type":"tool_result"%'
-                 AND (CAST(message.content AS VARCHAR) LIKE '<command-name>%'
-                      OR CAST(message.content AS VARCHAR) LIKE '<local-command-caveat>%'
-                      OR CAST(message.content AS VARCHAR) LIKE '<local-command-stdout>%'
+                 AND CAST(message.content AS VARCHAR) NOT LIKE '[{{{{"tool_use_id"%' 
+                 AND CAST(message.content AS VARCHAR) NOT LIKE '[{{{{"type":"tool_result"%' 
+                 AND (CAST(message.content AS VARCHAR) LIKE '<command-name>%' 
+                      OR CAST(message.content AS VARCHAR) LIKE '<local-command-caveat>%' 
+                      OR CAST(message.content AS VARCHAR) LIKE '<local-command-stdout>%' 
                       OR CAST(message.content AS VARCHAR) LIKE '<user-prompt-submit-hook>%')
             THEN 'hook'
             WHEN type = 'user'
-                 AND (CAST(message.content AS VARCHAR) LIKE '[{{{{"tool_use_id"%'
+                 AND (CAST(message.content AS VARCHAR) LIKE '[{{{{"tool_use_id"%' 
                       OR CAST(message.content AS VARCHAR) LIKE '[{{{{"type":"tool_result"%')
             THEN 'tool_result'
             ELSE type
@@ -54,7 +54,7 @@ tool_results AS (
         CAST(timestamp AS TIMESTAMP) as tool_result_ts
     FROM read_json_auto('{{path}}', {_JSON_OPTS})
     WHERE type = 'user'
-      AND (CAST(message.content AS VARCHAR) LIKE '[{{{{"tool_use_id"%'
+      AND (CAST(message.content AS VARCHAR) LIKE '[{{{{"tool_use_id"%' 
            OR CAST(message.content AS VARCHAR) LIKE '[{{{{"type":"tool_result"%')
 ),
 tool_result_list AS (
@@ -91,7 +91,7 @@ ORDER BY count DESC
 
 TOKEN_USAGE_QUERY = f"""
 WITH deduplicated AS (
-    SELECT DISTINCT ON (message.id)
+    SELECT DISTINCT ON (message.id) 
         message.usage.input_tokens as input_tokens,
         message.usage.output_tokens as output_tokens,
         message.usage.cache_creation_input_tokens as cache_creation,
@@ -147,7 +147,7 @@ WITH user_entries AS (
     FROM read_json_auto('{{path}}', {_JSON_OPTS})
     WHERE type = 'user'
 )
-SELECT *
+SELECT * 
 FROM user_entries
 WHERE content IS NOT NULL
 """
@@ -252,7 +252,7 @@ WHERE type = 'assistant' AND message.model IS NOT NULL
 
 TOKEN_USAGE_BY_MODEL_QUERY = f"""
 WITH deduplicated AS (
-    SELECT DISTINCT ON (message.id)
+    SELECT DISTINCT ON (message.id) 
         message.model as model,
         message.usage.input_tokens as input_tokens,
         message.usage.output_tokens as output_tokens,
@@ -300,7 +300,7 @@ ORDER BY timestamp
 
 DAILY_METRICS_QUERY = f"""
 WITH deduplicated AS (
-    SELECT DISTINCT ON (message.id)
+    SELECT DISTINCT ON (message.id) 
         timestamp,
         message.usage.input_tokens as input_tokens,
         message.usage.output_tokens as output_tokens,
@@ -429,11 +429,11 @@ hook_messages AS (
         false as is_error
     FROM base_messages
     WHERE type = 'user'
-      AND content_str NOT LIKE '[{{{{"tool_use_id"%'
-      AND content_str NOT LIKE '[{{{{"type":"tool_result"%'
-      AND (content_str LIKE '<command-name>%'
-           OR content_str LIKE '<local-command-caveat>%'
-           OR content_str LIKE '<local-command-stdout>%'
+      AND content_str NOT LIKE '[{{{{"tool_use_id"%' 
+      AND content_str NOT LIKE '[{{{{"type":"tool_result"%' 
+      AND (content_str LIKE '<command-name>%' 
+           OR content_str LIKE '<local-command-caveat>%' 
+           OR content_str LIKE '<local-command-stdout>%' 
            OR content_str LIKE '<user-prompt-submit-hook>%')
 ),
 user_prompt_messages AS (
@@ -449,11 +449,11 @@ user_prompt_messages AS (
         false as is_error
     FROM base_messages
     WHERE type = 'user'
-      AND content_str NOT LIKE '[{{{{"tool_use_id"%'
-      AND content_str NOT LIKE '[{{{{"type":"tool_result"%'
-      AND content_str NOT LIKE '<command-name>%'
-      AND content_str NOT LIKE '<local-command-caveat>%'
-      AND content_str NOT LIKE '<local-command-stdout>%'
+      AND content_str NOT LIKE '[{{{{"tool_use_id"%' 
+      AND content_str NOT LIKE '[{{{{"type":"tool_result"%' 
+      AND content_str NOT LIKE '<command-name>%' 
+      AND content_str NOT LIKE '<local-command-caveat>%' 
+      AND content_str NOT LIKE '<local-command-stdout>%' 
       AND content_str NOT LIKE '<user-prompt-submit-hook>%'
 ),
 tool_result_messages AS (
@@ -522,7 +522,7 @@ ERROR_COUNT_QUERY = f"""
 SELECT COUNT(*) as error_count
 FROM read_json_auto('{{path}}', {_JSON_OPTS})
 WHERE type = 'user'
-  AND (CAST(message.content AS VARCHAR) LIKE '%"is_error": true%'
+  AND (CAST(message.content AS VARCHAR) LIKE '%"is_error": true%' 
        OR CAST(message.content AS VARCHAR) LIKE '%"is_error":true%')
 """
 
@@ -635,4 +635,237 @@ SELECT
     t.total
 FROM ordered_messages m, total_count t
 WHERE m.row_num = {{index}}
+"""
+
+# ============================================================================
+# GLOB-BASED AGGREGATE QUERIES (Priority 2 Optimizations)
+# ============================================================================
+# These queries use DuckDB's glob patterns to aggregate across multiple files
+# in a single query, replacing N+1 query patterns.
+
+# Aggregate token usage and metrics across all sessions in all projects
+# Uses glob pattern like '~/.claude/projects/*/*.jsonl'
+AGGREGATE_ALL_PROJECTS_QUERY = f"""
+WITH file_data AS (
+    SELECT
+        filename,
+        regexp_extract(filename, '.*/projects/([^/]+)/[^/]+\.jsonl$', 1) as project_hash,
+        regexp_extract(filename, '.*/projects/[^/]+/([^/]+)\.jsonl$', 1) as session_id,
+        type,
+        timestamp,
+        message
+    FROM read_json_auto(
+        '{{glob_pattern}}',
+        filename=true,
+        {_JSON_OPTS}
+    )
+    WHERE regexp_extract(filename, '.*/projects/[^/]+/([^/]+)\.jsonl$', 1) NOT LIKE 'agent-%'
+),
+deduplicated AS (
+    SELECT DISTINCT ON (project_hash, session_id, message.id) 
+        project_hash,
+        session_id,
+        message.model as model,
+        message.usage.input_tokens as input_tokens,
+        message.usage.output_tokens as output_tokens,
+        message.usage.cache_creation_input_tokens as cache_creation,
+        message.usage.cache_read_input_tokens as cache_read,
+        timestamp
+    FROM file_data
+    WHERE type = 'assistant'
+      AND message.usage IS NOT NULL
+      AND message.id IS NOT NULL
+),
+project_metrics AS (
+    SELECT
+        project_hash,
+        COUNT(DISTINCT session_id) as session_count,
+        COALESCE(SUM(input_tokens), 0) as total_input_tokens,
+        COALESCE(SUM(output_tokens), 0) as total_output_tokens,
+        COALESCE(SUM(cache_creation), 0) as total_cache_creation,
+        COALESCE(SUM(cache_read), 0) as total_cache_read,
+        MIN(timestamp) as first_activity,
+        MAX(timestamp) as last_activity,
+        array_agg(DISTINCT model) FILTER (WHERE model IS NOT NULL) as models_used
+    FROM deduplicated
+    GROUP BY project_hash
+)
+SELECT * FROM project_metrics
+"""
+
+# Aggregate token usage for a single project across all its sessions
+AGGREGATE_PROJECT_SESSIONS_QUERY = f"""
+WITH file_data AS (
+    SELECT
+        filename,
+        regexp_extract(filename, '.*/([^/]+)\.jsonl$', 1) as session_id,
+        type,
+        timestamp,
+        message
+    FROM read_json_auto(
+        '{{glob_pattern}}',
+        filename=true,
+        {_JSON_OPTS}
+    )
+    WHERE regexp_extract(filename, '.*/([^/]+)\.jsonl$', 1) NOT LIKE 'agent-%'
+),
+deduplicated AS (
+    SELECT DISTINCT ON (session_id, message.id) 
+        session_id,
+        message.model as model,
+        message.usage.input_tokens as input_tokens,
+        message.usage.output_tokens as output_tokens,
+        message.usage.cache_creation_input_tokens as cache_creation,
+        message.usage.cache_read_input_tokens as cache_read,
+        timestamp
+    FROM file_data
+    WHERE type = 'assistant'
+      AND message.usage IS NOT NULL
+      AND message.id IS NOT NULL
+)
+SELECT
+    COUNT(DISTINCT session_id) as session_count,
+    COALESCE(SUM(input_tokens), 0) as total_input_tokens,
+    COALESCE(SUM(output_tokens), 0) as total_output_tokens,
+    COALESCE(SUM(cache_creation), 0) as total_cache_creation,
+    COALESCE(SUM(cache_read), 0) as total_cache_read,
+    MIN(timestamp) as first_activity,
+    MAX(timestamp) as last_activity
+FROM deduplicated
+"""
+
+# Token usage by model across multiple files (for accurate cost calculation)
+TOKEN_USAGE_BY_MODEL_GLOB_QUERY = f"""
+WITH deduplicated AS (
+    SELECT DISTINCT ON (message.id) 
+        message.model as model,
+        message.usage.input_tokens as input_tokens,
+        message.usage.output_tokens as output_tokens,
+        message.usage.cache_creation_input_tokens as cache_creation,
+        message.usage.cache_read_input_tokens as cache_read
+    FROM read_json_auto({{paths}}, {_JSON_OPTS})
+    WHERE type = 'assistant'
+      AND message.usage IS NOT NULL
+      AND message.model IS NOT NULL
+      AND message.id IS NOT NULL
+)
+SELECT
+    model,
+    COALESCE(SUM(input_tokens), 0) as input_tokens,
+    COALESCE(SUM(output_tokens), 0) as output_tokens,
+    COALESCE(SUM(cache_creation), 0) as cache_creation,
+    COALESCE(SUM(cache_read), 0) as cache_read
+FROM deduplicated
+GROUP BY model
+"""
+
+# Batch query for session summaries - get multiple sessions at once
+BATCH_SESSION_SUMMARIES_QUERY = f"""
+WITH file_data AS (
+    SELECT
+        filename,
+        regexp_extract(filename, '.*/([^/]+)\.jsonl$', 1) as session_id,
+        type,
+        timestamp,
+        message
+    FROM read_json_auto(
+        '{{glob_pattern}}',
+        filename=true,
+        {_JSON_OPTS}
+    )
+    WHERE regexp_extract(filename, '.*/([^/]+)\.jsonl$', 1) NOT LIKE 'agent-%'
+),
+token_usage AS (
+    SELECT DISTINCT ON (session_id, message.id) 
+        session_id,
+        message.model as model,
+        message.usage.input_tokens as input_tokens,
+        message.usage.output_tokens as output_tokens,
+        message.usage.cache_creation_input_tokens as cache_creation,
+        message.usage.cache_read_input_tokens as cache_read
+    FROM file_data
+    WHERE type = 'assistant'
+      AND message.usage IS NOT NULL
+      AND message.id IS NOT NULL
+),
+session_tokens AS (
+    SELECT
+        session_id,
+        COALESCE(SUM(input_tokens), 0) as input_tokens,
+        COALESCE(SUM(output_tokens), 0) as output_tokens,
+        COALESCE(SUM(cache_creation), 0) as cache_creation,
+        COALESCE(SUM(cache_read), 0) as cache_read
+    FROM token_usage
+    GROUP BY session_id
+),
+session_model_costs AS (
+    SELECT
+        session_id,
+        model,
+        COALESCE(SUM(input_tokens), 0) as model_input,
+        COALESCE(SUM(output_tokens), 0) as model_output,
+        COALESCE(SUM(cache_creation), 0) as model_cache_creation,
+        COALESCE(SUM(cache_read), 0) as model_cache_read
+    FROM token_usage
+    WHERE model IS NOT NULL
+    GROUP BY session_id, model
+),
+message_counts AS (
+    SELECT
+        session_id,
+        COUNT(*) as message_count
+    FROM file_data
+    WHERE type IN ('assistant', 'user')
+    GROUP BY session_id
+),
+time_ranges AS (
+    SELECT
+        session_id,
+        MIN(timestamp) as start_time,
+        MAX(timestamp) as end_time
+    FROM file_data
+    GROUP BY session_id
+),
+error_counts AS (
+    SELECT
+        session_id,
+        COUNT(*) as error_count
+    FROM file_data
+    WHERE type = 'user'
+      AND (CAST(message.content AS VARCHAR) LIKE '%"is_error": true%' 
+           OR CAST(message.content AS VARCHAR) LIKE '%"is_error":true%')
+    GROUP BY session_id
+),
+status_check AS (
+    SELECT DISTINCT ON (session_id)
+        session_id,
+        type = 'summary' as has_summary
+    FROM file_data
+    WHERE type = 'summary'
+)
+SELECT
+    t.session_id,
+    st.input_tokens,
+    st.output_tokens,
+    st.cache_creation,
+    st.cache_read,
+    mc.message_count,
+    tr.start_time,
+    tr.end_time,
+    COALESCE(ec.error_count, 0) as error_count,
+    COALESCE(sc.has_summary, false) as has_summary
+FROM time_ranges t
+LEFT JOIN session_tokens st ON t.session_id = st.session_id
+LEFT JOIN message_counts mc ON t.session_id = mc.session_id
+LEFT JOIN error_counts ec ON t.session_id = ec.session_id
+LEFT JOIN status_check sc ON t.session_id = sc.session_id
+"""
+
+# Error count across multiple files
+ERROR_COUNT_GLOB_QUERY = f"""
+SELECT COUNT(*) as error_count
+FROM read_json_auto({{paths}}, {_JSON_OPTS})
+WHERE type = 'user'
+  AND (CAST(message.content AS VARCHAR) LIKE '%"is_error": true%' 
+       OR CAST(message.content AS VARCHAR) LIKE '%"is_error":true%')
 """

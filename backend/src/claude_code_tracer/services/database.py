@@ -1,5 +1,8 @@
 """DuckDB database connection management."""
 
+import threading
+import time
+from collections import defaultdict
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
@@ -7,10 +10,16 @@ from re import compile as re_compile
 
 import duckdb
 import orjson
+from loguru import logger
 
 CLAUDE_DIR = Path.home() / ".claude"
 PROJECTS_DIR = CLAUDE_DIR / "projects"
 UUID_PATTERN = re_compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+# Session view cache: {session_path: (view_name, created_time, file_mtime)}
+_session_views: dict[str, tuple[str, float, float]] = {}
+_session_views_lock = threading.Lock()
+SESSION_VIEW_TTL = 300  # 5 minutes
 
 
 def is_valid_uuid(val: str) -> bool:
@@ -18,15 +27,151 @@ def is_valid_uuid(val: str) -> bool:
     return bool(UUID_PATTERN.match(val))
 
 
+class DuckDBPool:
+    """Thread-safe singleton for DuckDB connection."""
+
+    _instance: duckdb.DuckDBPyConnection | None = None
+    _lock = threading.RLock()
+
+    @classmethod
+    def get_connection(cls) -> duckdb.DuckDBPyConnection:
+        """Get or create the shared DuckDB connection."""
+        with cls._lock:
+            if cls._instance is None:
+                cls._instance = duckdb.connect(":memory:")
+                cls._instance.execute("SET enable_progress_bar = false")
+            return cls._instance
+
+    @classmethod
+    def close(cls) -> None:
+        """Close the connection if it exists."""
+        with cls._lock:
+            if cls._instance is not None:
+                cls._instance.close()
+                cls._instance = None
+
+
 @contextmanager
 def get_connection() -> Generator[duckdb.DuckDBPyConnection, None, None]:
-    """Get DuckDB connection with proper settings."""
-    conn = duckdb.connect(":memory:")
-    conn.execute("SET enable_progress_bar = false")
+    """Get persistent DuckDB connection."""
+    yield DuckDBPool.get_connection()
+
+
+def get_or_create_session_view(session_path: Path) -> str:
+    """Get or create a temporary view for a session file.
+
+    This optimization (Priority 2.3) creates a temporary DuckDB view for the
+    session file, avoiding repeated read_json_auto() calls when multiple
+    queries need the same session data (e.g., /messages, /metrics, /tools).
+
+    The view is cached based on file path and mtime, and automatically
+    invalidated when the file changes or after TTL expires.
+
+    Returns:
+        The view name to use in queries
+    """
+    path_str = str(session_path)
+
+    if not session_path.exists():
+        raise FileNotFoundError(f"Session file not found: {path_str}")
+
+    current_mtime = session_path.stat().st_mtime
+    current_time = time.time()
+
+    with _session_views_lock:
+        if path_str in _session_views:
+            view_name, created_time, cached_mtime = _session_views[path_str]
+
+            # Check if view is still valid (not expired and file unchanged)
+            if (
+                current_time - created_time < SESSION_VIEW_TTL
+                and cached_mtime == current_mtime
+            ):
+                return view_name
+
+            # View is stale, drop it
+            try:
+                conn = DuckDBPool.get_connection()
+                conn.execute(f"DROP VIEW IF EXISTS {view_name}")
+            except Exception:
+                pass
+            del _session_views[path_str]
+
+        # Create new view
+        view_name = f"session_{abs(hash(path_str)) % 100000}"
+
+        conn = DuckDBPool.get_connection()
+        try:
+            conn.execute(f"""
+                CREATE OR REPLACE TEMPORARY VIEW {view_name} AS
+                SELECT *
+                FROM read_json_auto(
+                    '{path_str}',
+                    maximum_object_size=104857600,
+                    ignore_errors=true,
+                    union_by_name=true
+                )
+            """)
+            _session_views[path_str] = (view_name, current_time, current_mtime)
+            return view_name
+        except Exception as e:
+            logger.debug(f"Failed to create session view: {e}")
+            # Return path string for direct read_json_auto() usage
+            raise
+
+
+def invalidate_session_view(session_path: Path) -> None:
+    """Invalidate a session view (call when session is modified)."""
+    path_str = str(session_path)
+
+    with _session_views_lock:
+        if path_str in _session_views:
+            view_name, _, _ = _session_views[path_str]
+            try:
+                conn = DuckDBPool.get_connection()
+                conn.execute(f"DROP VIEW IF EXISTS {view_name}")
+            except Exception:
+                pass
+            del _session_views[path_str]
+
+
+def cleanup_stale_views() -> int:
+    """Clean up expired session views. Returns count of views cleaned."""
+    current_time = time.time()
+    cleaned = 0
+
+    with _session_views_lock:
+        stale_paths = [
+            path_str
+            for path_str, (_, created_time, _) in _session_views.items()
+            if current_time - created_time >= SESSION_VIEW_TTL
+        ]
+
+        conn = DuckDBPool.get_connection()
+        for path_str in stale_paths:
+            view_name, _, _ = _session_views[path_str]
+            try:
+                conn.execute(f"DROP VIEW IF EXISTS {view_name}")
+            except Exception:
+                pass
+            del _session_views[path_str]
+            cleaned += 1
+
+    return cleaned
+
+
+def get_session_view_query(session_path: Path) -> str:
+    """Get a query source for session data - either view name or read_json_auto.
+
+    This is a fallback-safe version that tries to use a view but falls back
+    to direct file reading if view creation fails.
+    """
     try:
-        yield conn
-    finally:
-        conn.close()
+        view_name = get_or_create_session_view(session_path)
+        return view_name
+    except Exception:
+        # Fall back to direct read
+        return f"read_json_auto('{session_path}', maximum_object_size=104857600, ignore_errors=true, union_by_name=true)"
 
 
 def get_project_dir(project_hash: str) -> Path:
@@ -98,38 +243,61 @@ def get_subagent_path_for_session(
     return None
 
 
-def get_subagent_files_for_session(project_hash: str, session_id: str) -> list[Path]:
-    """Find all subagent files that belong to a session.
+# Cache: {project_hash: (mtime, {session_id: [paths]})}
+_subagent_cache: dict[str, tuple[float, dict[str, list[Path]]]] = {}
 
-    Checks both:
-    1. {project_dir}/{session_id}/subagents/ directory (new structure)
-    2. Files in project_dir with matching sessionId (old structure)
+
+def _build_subagent_index(project_dir: Path) -> dict[str, list[Path]]:
+    """Build mapping of session_id -> subagent file paths."""
+    index: dict[str, list[Path]] = defaultdict(list)
+
+    for agent_file in project_dir.glob("**/agent-*.jsonl"):
+        session_id = _extract_session_id_from_agent_file(agent_file)
+        if session_id:
+            index[session_id].append(agent_file)
+
+    return index
+
+
+def _extract_session_id_from_agent_file(agent_file: Path) -> str | None:
+    """Extract session ID from agent file path or content."""
+    # Fast path: check directory structure {session_id}/subagents/agent-*.jsonl
+    if agent_file.parent.name == "subagents":
+        session_id = agent_file.parent.parent.name
+        if is_valid_uuid(session_id):
+            return session_id
+
+    # Slow path: read sessionId from file header
+    try:
+        with open(agent_file, "rb") as f:
+            first_line = f.readline()
+            if first_line:
+                data = orjson.loads(first_line)
+                return data.get("sessionId")
+    except (orjson.JSONDecodeError, OSError) as e:
+        logger.debug(f"Could not parse subagent file {agent_file}: {e}")
+
+    return None
+
+
+def get_subagent_files_for_session(project_hash: str, session_id: str) -> list[Path]:
+    """Find all subagent files for a session.
+
+    Uses a cached index with mtime-based invalidation.
     """
     project_dir = get_project_dir(project_hash)
     if not project_dir.exists():
         return []
 
-    subagent_files = []
+    current_mtime = project_dir.stat().st_mtime
+    cached = _subagent_cache.get(project_hash)
 
-    # Check new structure: {session_id}/subagents/
-    session_subagents_dir = project_dir / session_id / "subagents"
-    if session_subagents_dir.exists():
-        for agent_file in session_subagents_dir.glob("agent-*.jsonl"):
-            subagent_files.append(agent_file)
+    if cached is None or cached[0] < current_mtime:
+        index = _build_subagent_index(project_dir)
+        _subagent_cache[project_hash] = (current_mtime, index)
+        cached = _subagent_cache[project_hash]
 
-    # Also check old structure: files directly in project_dir
-    for agent_file in project_dir.glob("agent-*.jsonl"):
-        try:
-            with open(agent_file, "rb") as f:
-                first_line = f.readline()
-                if first_line:
-                    data = orjson.loads(first_line)
-                    if data.get("sessionId") == session_id:
-                        subagent_files.append(agent_file)
-        except (orjson.JSONDecodeError, OSError):
-            continue
-
-    return subagent_files
+    return cached[1].get(session_id, [])
 
 
 def get_sessions_index_path(project_hash: str) -> Path:

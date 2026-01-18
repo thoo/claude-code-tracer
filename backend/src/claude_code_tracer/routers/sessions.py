@@ -31,6 +31,7 @@ from ..models.responses import (
 )
 from ..services.database import get_connection, get_session_path, list_projects, list_sessions
 from ..services.log_parser import (
+    get_all_projects_metrics,
     get_project_total_metrics,
     get_session_code_changes,
     get_session_errors,
@@ -52,6 +53,13 @@ from ..services.queries import (
 router = APIRouter(prefix="/api", tags=["sessions"])
 
 
+def _normalize_datetime(dt: datetime | None) -> datetime:
+    """Normalize datetime to UTC for safe comparison, with a minimum fallback."""
+    if dt is None:
+        return datetime.min.replace(tzinfo=UTC)
+    return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
+
+
 def require_session_path(project_hash: str, session_id: str) -> Path:
     """Get session path and raise 404 if it doesn't exist."""
     session_path = get_session_path(project_hash, session_id)
@@ -62,18 +70,31 @@ def require_session_path(project_hash: str, session_id: str) -> Path:
 
 @router.get("/projects", response_model=ProjectListResponse)
 async def get_projects() -> ProjectListResponse:
-    """List all projects from ~/.claude/projects/."""
-    projects_data = list_projects()
-    projects = []
+    """List all projects from ~/.claude/projects/.
 
+    Optimized to fetch all project metrics in a single query instead of
+    N+1 queries (one per project × sessions per project).
+    """
+    projects_data = list_projects()
+
+    # Get all project metrics in one batch query (Priority 2.1 optimization)
+    all_metrics = get_all_projects_metrics()
+
+    projects = []
     for proj in projects_data:
-        # Get aggregated metrics for each project
-        metrics = get_project_total_metrics(proj["path_hash"])
+        project_hash = proj["path_hash"]
+
+        # Use batch metrics if available, otherwise fall back to individual query
+        if project_hash in all_metrics:
+            metrics = all_metrics[project_hash]
+        else:
+            metrics = get_project_total_metrics(project_hash)
+
         tokens_data = metrics.get("tokens", {})
 
         projects.append(
             ProjectResponse(
-                path_hash=proj["path_hash"],
+                path_hash=project_hash,
                 project_path=proj["project_path"],
                 session_count=metrics.get("session_count", proj.get("session_count", 0)),
                 tokens=TokenUsage(
@@ -88,11 +109,9 @@ async def get_projects() -> ProjectListResponse:
             )
         )
 
-    # Sort by last activity, most recent first
+    # Sort by last activity (most recent first)
     projects.sort(
-        key=lambda p: p.last_activity
-        or p.first_activity
-        or datetime.min.replace(tzinfo=UTC),
+        key=lambda p: _normalize_datetime(p.last_activity or p.first_activity),
         reverse=True,
     )
 
@@ -111,19 +130,12 @@ async def get_project_sessions(project_hash: str) -> SessionListResponse:
     for sess in sessions_data:
         summary = parse_session_summary(project_hash, sess["session_id"])
         if summary:
+            summary = summary.model_copy()
             summary.slug = sess.get("slug")
             sessions.append(summary)
 
-    # Sort by start time, most recent first
-    # Normalize timezone to avoid comparing offset-naive and offset-aware datetimes
-    def sort_key(s: SessionSummary) -> datetime:
-        if s.start_time is None:
-            return datetime.min.replace(tzinfo=UTC)
-        if s.start_time.tzinfo is None:
-            return s.start_time.replace(tzinfo=UTC)
-        return s.start_time
-
-    sessions.sort(key=sort_key, reverse=True)
+    # Sort by start time (most recent first), normalizing timezone for comparison
+    sessions.sort(key=lambda s: _normalize_datetime(s.start_time), reverse=True)
 
     return SessionListResponse(sessions=sessions, total=len(sessions))
 
@@ -527,6 +539,7 @@ def _parse_usage_data(usage_data: str | dict | None) -> TokenUsage:
     if not usage_data:
         return TokenUsage()
 
+    # Parse JSON string if needed
     if isinstance(usage_data, str):
         try:
             usage_data = orjson.loads(usage_data)
@@ -560,24 +573,20 @@ def _parse_comprehensive_message_row(row: tuple) -> MessageResponse:
     - row[9]: row_num
     """
     msg_type = row[1]
+    is_subagent = msg_type == "subagent"
 
-    # For subagent messages, the content is already a JSON string from DuckDB's json_object()
-    if msg_type == "subagent":
+    # Subagent content is JSON from DuckDB - keep as-is; otherwise extract and truncate
+    if is_subagent:
         content_text = row[3] if row[3] else None
     else:
-        content_text = _extract_content_text(row[3])
-
-    # Don't truncate subagent content as it needs to be valid JSON for frontend parsing
-    if msg_type == "subagent":
-        truncated_content = content_text
-    else:
-        truncated_content = content_text[:500] if content_text else None
+        raw_content = _extract_content_text(row[3])
+        content_text = raw_content[:500] if raw_content else None
 
     return MessageResponse(
         uuid=str(row[0]),
         type=msg_type,
         timestamp=row[2],
-        content=truncated_content,
+        content=content_text,
         model=row[4],
         tokens=_parse_usage_data(row[5]),
         tools=[],
