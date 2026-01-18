@@ -49,6 +49,10 @@ class DuckDBPool:
             if cls._instance is not None:
                 cls._instance.close()
                 cls._instance = None
+            
+            # Clear session views cache as views are lost when connection closes
+            with _session_views_lock:
+                _session_views.clear()
 
 
 @contextmanager
@@ -98,23 +102,34 @@ def get_or_create_session_view(session_path: Path) -> str:
                 current_time - created_time < SESSION_VIEW_TTL
                 and cached_mtime == current_mtime
             ):
-                return view_name
-
-            # View is stale, drop it
+                # Verify view actually exists in DB (safeguard against connection resets)
+                try:
+                    # Quick check using a cursor
+                    conn = DuckDBPool.get_connection()
+                    conn.execute(f"SELECT 1 FROM {view_name} LIMIT 0")
+                    return view_name
+                except Exception:
+                    # View missing, remove from cache and recreate
+                    pass
+            
+            # View is stale or missing, remove from cache
             try:
                 conn = DuckDBPool.get_connection()
                 conn.execute(f"DROP VIEW IF EXISTS {view_name}")
             except Exception:
                 pass
-            del _session_views[path_str]
+            if path_str in _session_views:
+                del _session_views[path_str]
 
         # Create new view
         view_name = f"session_{abs(hash(path_str)) % 100000}"
 
         conn = DuckDBPool.get_connection()
         try:
+            # Use regular view (not TEMPORARY) because temporary views are not
+            # visible to cursors created from the same connection in DuckDB
             conn.execute(f"""
-                CREATE OR REPLACE TEMPORARY VIEW {view_name} AS
+                CREATE OR REPLACE VIEW {view_name} AS
                 SELECT *
                 FROM read_json_auto(
                     '{path_str}',
@@ -183,6 +198,42 @@ def get_session_view_query(session_path: Path) -> str:
     except Exception:
         # Fall back to direct read
         return f"read_json_auto('{session_path}', maximum_object_size=104857600, ignore_errors=true, union_by_name=true)"
+
+
+# Required columns for message queries
+REQUIRED_MESSAGE_COLUMNS = {"uuid", "timestamp", "message", "type"}
+
+
+def session_has_messages(session_path: Path) -> bool:
+    """Check if a session file has the required columns for message queries.
+
+    Some session files only contain metadata (summary, file-history-snapshot)
+    without actual message data. This function validates the schema before
+    attempting to run message queries.
+
+    Returns:
+        True if the session has message data, False otherwise.
+    """
+    if not session_path.exists():
+        return False
+
+    source = f"read_json_auto('{session_path}', maximum_object_size=104857600, ignore_errors=true, union_by_name=true)"
+
+    try:
+        conn = DuckDBPool.get_connection()
+        cursor = conn.cursor()
+        try:
+            # Get column names from the file
+            result = cursor.execute(f"DESCRIBE SELECT * FROM {source}").fetchall()
+            columns = {row[0] for row in result}
+
+            # Check if required columns exist
+            return REQUIRED_MESSAGE_COLUMNS.issubset(columns)
+        finally:
+            cursor.close()
+    except Exception as e:
+        logger.debug(f"Failed to check session schema: {e}")
+        return False
 
 
 def get_project_dir(project_hash: str) -> Path:

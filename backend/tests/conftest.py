@@ -24,7 +24,7 @@ def sample_session_file(mock_projects_dir):
     # Create a sample JSONL file
     with open(session_path, "w") as f:
         # User message
-        f.write('{"type": "user", "message": {"content": [{"type": "text", "text": "Hello"}], "id": "m1"}, "timestamp": "2024-01-01T12:00:00Z", "uuid": "u1"}\n')
+        f.write('{"type": "user", "message": {"content": [{"type": "text", "text": "Hello"}], "id": "m1", "usage": null}, "timestamp": "2024-01-01T12:00:00Z", "uuid": "u1"}\n')
         # Assistant message with usage
         f.write('{"type": "assistant", "message": {"content": [{"type": "text", "text": "Hi"}], "usage": {"input_tokens": 10, "output_tokens": 20, "cache_creation_input_tokens": 5, "cache_read_input_tokens": 2}, "model": "claude-3-5-sonnet-20241022", "id": "m2"}, "timestamp": "2024-01-01T12:00:05Z", "uuid": "u2"}\n')
         # Tool use

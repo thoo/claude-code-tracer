@@ -84,13 +84,14 @@ def cache_test_session(mock_projects_dir):
     project_hash = "cache-project"
     project_dir = mock_projects_dir / project_hash
     project_dir.mkdir(exist_ok=True)
-    
+
     session_id = "cache-session"
     session_path = project_dir / f"{session_id}.jsonl"
-    
+
     with open(session_path, "w") as f:
-        f.write('{"type": "user", "message": {"id": "1", "content": "hi"}, "timestamp": "2024-01-01T12:00:00Z"}\n')
-        
+        # Include uuid field which is required for session_has_messages validation
+        f.write('{"type": "user", "uuid": "test-uuid-1", "message": {"id": "1", "content": "hi"}, "timestamp": "2024-01-01T12:00:00Z"}\n')
+
     return project_hash, session_id, session_path
 
 # --- Tests for Cursor Utilities ---

@@ -57,6 +57,7 @@ from ..services.database import (
     get_connection,
     get_session_path,
     get_session_view_query,
+    session_has_messages,
 )
 from ..services.queries import (
     ERROR_COUNT_QUERY_V2,
@@ -355,6 +356,18 @@ async def get_session_messages(
     """
     session_path = require_session_path(project_hash, session_id)
 
+    # Check if session has actual message data (not just metadata)
+    if not session_has_messages(session_path):
+        return MessageListResponse(
+            messages=[],
+            total=0,
+            page=page,
+            per_page=per_page,
+            total_pages=0,
+            next_cursor=None,
+            has_more=False,
+        )
+
     # Build WHERE clause for filtering
     where_conditions = []
     if type_filter:
@@ -488,6 +501,14 @@ async def get_session_message_filters(
     Results are cached until the session file changes.
     """
     session_path = require_session_path(project_hash, session_id)
+
+    # Check if session has actual message data (not just metadata)
+    if not session_has_messages(session_path):
+        return MessageFilterOptions(
+            types=["assistant", "user", "hook", "tool_result"],
+            tools=[],
+            error_count=0,
+        )
 
     # Check cache first
     cached = get_cached_filter_options(session_path)
