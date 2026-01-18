@@ -1,6 +1,7 @@
 """Session-related API endpoints."""
 
-from datetime import UTC, datetime
+import base64
+from datetime import datetime
 from pathlib import Path
 
 import orjson
@@ -29,35 +30,45 @@ from ..models.responses import (
     ToolUsageStats,
     UserCommand,
 )
-from ..services.database import get_connection, get_session_path, list_projects, list_sessions
-from ..services.log_parser import (
-    get_all_projects_metrics,
-    get_project_total_metrics,
-    get_session_code_changes,
-    get_session_errors,
-    get_session_metrics,
-    get_session_skills,
-    get_session_subagents,
-    get_session_tool_usage,
-    parse_session_summary,
+from ..services.async_io import (
+    get_all_projects_metrics_async,
+    get_project_total_metrics_async,
+    get_session_code_changes_async,
+    get_session_errors_async,
+    get_session_metrics_async,
+    get_session_skills_async,
+    get_session_subagents_async,
+    get_session_tool_usage_async,
+    list_projects_async,
+    list_sessions_async,
+    parse_session_summary_async,
+)
+from ..services.cache import (
+    cache_filter_options,
+    cache_metrics,
+    cache_subagents,
+    cache_tool_usage,
+    get_cached_filter_options,
+    get_cached_metrics,
+    get_cached_subagents,
+    get_cached_tool_usage,
+)
+from ..services.database import (
+    get_connection,
+    get_session_path,
+    get_session_view_query,
 )
 from ..services.queries import (
-    ERROR_COUNT_QUERY,
+    ERROR_COUNT_QUERY_V2,
     MESSAGE_BY_INDEX_QUERY,
     MESSAGE_DETAIL_QUERY,
-    MESSAGES_COMPREHENSIVE_QUERY,
-    TOOL_NAMES_LIST_QUERY,
-    USER_COMMANDS_QUERY,
+    MESSAGES_COMPREHENSIVE_QUERY_V2,
+    TOOL_NAMES_LIST_QUERY_V2,
+    USER_COMMANDS_QUERY_V2,
 )
+from ..utils.datetime import normalize_datetime
 
 router = APIRouter(prefix="/api", tags=["sessions"])
-
-
-def _normalize_datetime(dt: datetime | None) -> datetime:
-    """Normalize datetime to UTC for safe comparison, with a minimum fallback."""
-    if dt is None:
-        return datetime.min.replace(tzinfo=UTC)
-    return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
 
 
 def require_session_path(project_hash: str, session_id: str) -> Path:
@@ -68,17 +79,62 @@ def require_session_path(project_hash: str, session_id: str) -> Path:
     return session_path
 
 
+# ============================================================================
+# Cursor-based Pagination Utilities (Priority 3.1)
+# ============================================================================
+
+
+def encode_cursor(timestamp: datetime | str, uuid: str) -> str:
+    """Encode a timestamp and uuid into a base64 cursor string.
+
+    The cursor format is: base64(timestamp_iso|uuid)
+
+    Args:
+        timestamp: Either a datetime object or an ISO format string
+        uuid: The message UUID
+    """
+    if timestamp is None:
+        ts_str = ""
+    elif isinstance(timestamp, str):
+        ts_str = timestamp  # Already an ISO string from DuckDB
+    else:
+        ts_str = timestamp.isoformat()
+    cursor_data = f"{ts_str}|{uuid}"
+    return base64.urlsafe_b64encode(cursor_data.encode()).decode()
+
+
+def decode_cursor(cursor: str) -> tuple[datetime | None, str | None]:
+    """Decode a base64 cursor string into timestamp and uuid.
+
+    Returns (timestamp, uuid) or (None, None) if invalid.
+    """
+    try:
+        cursor_data = base64.urlsafe_b64decode(cursor.encode()).decode()
+        parts = cursor_data.split("|", 1)
+        if len(parts) != 2:
+            return None, None
+
+        ts_str, uuid_str = parts
+        timestamp = datetime.fromisoformat(ts_str) if ts_str else None
+        return timestamp, uuid_str
+    except (ValueError, UnicodeDecodeError):
+        return None, None
+
+
 @router.get("/projects", response_model=ProjectListResponse)
 async def get_projects() -> ProjectListResponse:
     """List all projects from ~/.claude/projects/.
 
     Optimized to fetch all project metrics in a single query instead of
     N+1 queries (one per project × sessions per project).
+
+    Uses background index for project discovery (Priority 4.1) and
+    async I/O for non-blocking operation (Priority 4.2).
     """
-    projects_data = list_projects()
+    projects_data = await list_projects_async()
 
     # Get all project metrics in one batch query (Priority 2.1 optimization)
-    all_metrics = get_all_projects_metrics()
+    all_metrics = await get_all_projects_metrics_async()
 
     projects = []
     for proj in projects_data:
@@ -88,7 +144,7 @@ async def get_projects() -> ProjectListResponse:
         if project_hash in all_metrics:
             metrics = all_metrics[project_hash]
         else:
-            metrics = get_project_total_metrics(project_hash)
+            metrics = await get_project_total_metrics_async(project_hash)
 
         tokens_data = metrics.get("tokens", {})
 
@@ -111,7 +167,7 @@ async def get_projects() -> ProjectListResponse:
 
     # Sort by last activity (most recent first)
     projects.sort(
-        key=lambda p: _normalize_datetime(p.last_activity or p.first_activity),
+        key=lambda p: normalize_datetime(p.last_activity or p.first_activity),
         reverse=True,
     )
 
@@ -120,30 +176,37 @@ async def get_projects() -> ProjectListResponse:
 
 @router.get("/projects/{project_hash}/sessions", response_model=SessionListResponse)
 async def get_project_sessions(project_hash: str) -> SessionListResponse:
-    """List all sessions for a project."""
-    sessions_data = list_sessions(project_hash)
+    """List all sessions for a project.
+
+    Uses background index for session discovery (Priority 4.1) and
+    async I/O for non-blocking operation (Priority 4.2).
+    """
+    sessions_data = await list_sessions_async(project_hash)
 
     if not sessions_data:
         return SessionListResponse(sessions=[], total=0)
 
     sessions = []
     for sess in sessions_data:
-        summary = parse_session_summary(project_hash, sess["session_id"])
+        summary = await parse_session_summary_async(project_hash, sess["session_id"])
         if summary:
             summary = summary.model_copy()
             summary.slug = sess.get("slug")
             sessions.append(summary)
 
     # Sort by start time (most recent first), normalizing timezone for comparison
-    sessions.sort(key=lambda s: _normalize_datetime(s.start_time), reverse=True)
+    sessions.sort(key=lambda s: normalize_datetime(s.start_time), reverse=True)
 
     return SessionListResponse(sessions=sessions, total=len(sessions))
 
 
 @router.get("/projects/{project_hash}/metrics", response_model=SessionMetricsResponse)
 async def get_project_metrics(project_hash: str) -> SessionMetricsResponse:
-    """Get aggregated metrics for all sessions in a project."""
-    sessions_data = list_sessions(project_hash)
+    """Get aggregated metrics for all sessions in a project.
+
+    Uses async I/O for non-blocking operation (Priority 4.2).
+    """
+    sessions_data = await list_sessions_async(project_hash)
 
     if not sessions_data:
         return SessionMetricsResponse()
@@ -166,7 +229,7 @@ async def get_project_metrics(project_hash: str) -> SessionMetricsResponse:
     total_commands = 0
 
     for sess in sessions_data:
-        metrics = get_session_metrics(project_hash, sess["session_id"])
+        metrics = await get_session_metrics_async(project_hash, sess["session_id"])
         if metrics:
             total_input_tokens += metrics.tokens.input_tokens
             total_output_tokens += metrics.tokens.output_tokens
@@ -221,8 +284,11 @@ async def get_project_metrics(project_hash: str) -> SessionMetricsResponse:
 
 @router.get("/projects/{project_hash}/tools", response_model=ToolUsageResponse)
 async def get_project_tools(project_hash: str) -> ToolUsageResponse:
-    """Get aggregated tool usage for all sessions in a project."""
-    sessions_data = list_sessions(project_hash)
+    """Get aggregated tool usage for all sessions in a project.
+
+    Uses async I/O for non-blocking operation (Priority 4.2).
+    """
+    sessions_data = await list_sessions_async(project_hash)
 
     if not sessions_data:
         return ToolUsageResponse(tools=[], total_calls=0)
@@ -231,7 +297,7 @@ async def get_project_tools(project_hash: str) -> ToolUsageResponse:
     tool_counts: dict[str, int] = {}
 
     for sess in sessions_data:
-        tools_data = get_session_tool_usage(project_hash, sess["session_id"])
+        tools_data = await get_session_tool_usage_async(project_hash, sess["session_id"])
         if tools_data:
             for tool in tools_data.tools:
                 tool_counts[tool.name] = tool_counts.get(tool.name, 0) + tool.count
@@ -248,8 +314,11 @@ async def get_project_tools(project_hash: str) -> ToolUsageResponse:
 
 @router.get("/sessions/{project_hash}/{session_id}", response_model=SessionSummary)
 async def get_session(project_hash: str, session_id: str) -> SessionSummary:
-    """Get session details."""
-    summary = parse_session_summary(project_hash, session_id)
+    """Get session details.
+
+    Uses async I/O for non-blocking operation (Priority 4.2).
+    """
+    summary = await parse_session_summary_async(project_hash, session_id)
     if not summary:
         raise HTTPException(status_code=404, detail="Session not found")
     return summary
@@ -265,14 +334,24 @@ async def get_session_messages(
     tool_filter: str | None = Query(default=None, alias="tool"),
     error_only: bool = Query(default=False),
     search: str | None = Query(default=None),
+    cursor: str | None = Query(default=None, description="Cursor for keyset pagination"),
 ) -> MessageListResponse:
     """Get paginated messages for a session with filtering.
+
+    Supports both page-based and cursor-based pagination:
+    - page/per_page: Traditional offset pagination (default)
+    - cursor: Keyset pagination using timestamp|uuid (more efficient for deep pages)
 
     Supports filtering by:
     - type: 'assistant', 'user', 'hook', or 'tool_result'
     - tool: filter by tool name (for assistant messages with that tool)
     - error_only: only show messages with errors (tool_result messages)
     - search: text search in message content (case-insensitive)
+
+    Optimizations (Phase 3):
+    - Uses session views to avoid re-parsing JSONL files (Priority 2.3)
+    - Uses lazy counting (limit+1 pattern) to avoid expensive COUNT queries (Priority 3.2)
+    - Supports keyset pagination for efficient deep pagination (Priority 3.1)
     """
     session_path = require_session_path(project_hash, session_id)
 
@@ -293,43 +372,108 @@ async def get_session_messages(
     if where_conditions:
         where_clause = "WHERE " + " AND ".join(where_conditions)
 
-    offset = (page - 1) * per_page
+    # Determine pagination mode: cursor-based or page-based
+    use_cursor = cursor is not None
+    cursor_ts, cursor_uuid = (None, None)
+
+    if use_cursor:
+        cursor_ts, cursor_uuid = decode_cursor(cursor)
+        if cursor_ts is None or cursor_uuid is None:
+            raise HTTPException(status_code=400, detail="Invalid cursor format")
+        offset = 0  # Not used in cursor mode
+    else:
+        offset = (page - 1) * per_page
+
+    # Get session view or fall back to direct file read (Priority 2.3 optimization)
+    source = get_session_view_query(session_path)
 
     with get_connection() as conn:
         try:
-            # Get paginated messages using comprehensive query
-            query = MESSAGES_COMPREHENSIVE_QUERY.format(
-                path=str(session_path),
+            # Get paginated messages using comprehensive V2 query with session view
+            query = MESSAGES_COMPREHENSIVE_QUERY_V2.format(
+                source=source,
                 sort_dir="ASC",
                 where_clause=where_clause,
             )
-            # Add pagination
-            paginated_query = f"""
-            WITH comprehensive AS ({query})
-            SELECT * FROM comprehensive
-            WHERE row_num > {offset}
-            LIMIT {per_page}
-            """
+
+            # Lazy counting optimization (Priority 3.2):
+            # Request limit+1 rows to determine if there are more results
+            fetch_limit = per_page + 1
+
+            if use_cursor:
+                # Keyset pagination (Priority 3.1):
+                # Cast both sides to TIMESTAMP for proper comparison:
+                # - timestamp column may be VARCHAR (from JSONL) or TIMESTAMP (from tests)
+                # - cursor string is ISO format which DuckDB parses automatically
+                cursor_ts_str = cursor_ts.isoformat() if cursor_ts else ""
+                paginated_query = f"""
+                WITH comprehensive AS ({query})
+                SELECT * FROM comprehensive
+                WHERE CAST(timestamp AS TIMESTAMP) > TIMESTAMP '{cursor_ts_str}'
+                   OR (CAST(timestamp AS TIMESTAMP) = TIMESTAMP '{cursor_ts_str}' AND CAST(uuid AS VARCHAR) > '{cursor_uuid}')
+                ORDER BY timestamp ASC, uuid ASC
+                LIMIT {fetch_limit}
+                """
+            else:
+                # Traditional offset pagination
+                paginated_query = f"""
+                WITH comprehensive AS ({query})
+                SELECT * FROM comprehensive
+                WHERE row_num > {offset}
+                LIMIT {fetch_limit}
+                """
+
             result = conn.execute(paginated_query).fetchall()
 
-            # Get total count for pagination
-            count_query = f"""
-            WITH comprehensive AS ({query})
-            SELECT COUNT(*) FROM comprehensive
-            """
-            total = conn.execute(count_query).fetchone()[0]
+            # Determine if there are more results based on whether we got limit+1 rows
+            has_more = len(result) > per_page
+            if has_more:
+                result = result[:per_page]  # Return only requested amount
+
+            # Calculate next cursor if there are more results
+            next_cursor = None
+            if has_more and result:
+                last_row = result[-1]
+                # Row indices: 0=uuid, 1=msg_type, 2=timestamp, ...
+                last_timestamp = last_row[2]
+                last_uuid = last_row[0]
+                next_cursor = encode_cursor(last_timestamp, str(last_uuid))
+
+            # Calculate total (only needed for page-based pagination UI)
+            if use_cursor:
+                # In cursor mode, total is not needed (use has_more instead)
+                total = 0
+                total_pages = 0
+            elif page == 1 and not has_more:
+                # All results fit on first page
+                total = len(result)
+                total_pages = 1
+            elif page == 1:
+                # First page with more results - need count for UI
+                count_query = f"""
+                WITH comprehensive AS ({query})
+                SELECT COUNT(*) FROM comprehensive
+                """
+                total = conn.execute(count_query).fetchone()[0]
+                total_pages = (total + per_page - 1) // per_page if total > 0 else 1
+            else:
+                # Subsequent pages - estimate total
+                total = offset + len(result) + (1 if has_more else 0)
+                total_pages = (total + per_page - 1) // per_page if total > 0 else 1
+
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     messages = [_parse_comprehensive_message_row(row) for row in result]
-    total_pages = (total + per_page - 1) // per_page
 
     return MessageListResponse(
         messages=messages,
         total=total,
-        page=page,
+        page=page if not use_cursor else 0,
         per_page=per_page,
         total_pages=total_pages,
+        next_cursor=next_cursor,
+        has_more=has_more,
     )
 
 
@@ -338,30 +482,46 @@ async def get_session_message_filters(
     project_hash: str,
     session_id: str,
 ) -> MessageFilterOptions:
-    """Get available filter options for session messages."""
+    """Get available filter options for session messages.
+
+    Uses session views (Priority 2.3) and query result caching (Priority 3.6).
+    Results are cached until the session file changes.
+    """
     session_path = require_session_path(project_hash, session_id)
+
+    # Check cache first
+    cached = get_cached_filter_options(session_path)
+    if cached is not None:
+        return cached
+
+    # Use session view for efficient querying
+    source = get_session_view_query(session_path)
 
     with get_connection() as conn:
         try:
-            # Get tool names with counts
+            # Get tool names with counts using V2 query with session view
             tools_result = conn.execute(
-                TOOL_NAMES_LIST_QUERY.format(path=str(session_path))
+                TOOL_NAMES_LIST_QUERY_V2.format(source=source)
             ).fetchall()
             tools = [ToolFilterOption(name=row[0], count=row[1]) for row in tools_result]
 
-            # Get error count
+            # Get error count using V2 query with session view
             error_result = conn.execute(
-                ERROR_COUNT_QUERY.format(path=str(session_path))
+                ERROR_COUNT_QUERY_V2.format(source=source)
             ).fetchone()
             error_count = error_result[0] if error_result else 0
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e)) from e
 
-    return MessageFilterOptions(
+    result = MessageFilterOptions(
         types=["assistant", "user", "hook", "tool_result"],
         tools=tools,
         error_count=error_count,
     )
+
+    # Cache the result
+    cache_filter_options(session_path, result)
+    return result
 
 
 @router.get(
@@ -681,34 +841,79 @@ def _extract_content_text(msg_content: dict | str | None) -> str:
 
 @router.get("/sessions/{project_hash}/{session_id}/tools", response_model=ToolUsageResponse)
 async def get_session_tools(project_hash: str, session_id: str) -> ToolUsageResponse:
-    """Get tool usage statistics for a session."""
-    require_session_path(project_hash, session_id)
-    return get_session_tool_usage(project_hash, session_id)
+    """Get tool usage statistics for a session.
+
+    Uses query result caching (Priority 3.6) - results are cached until the
+    session file changes (mtime-based invalidation).
+    Uses async I/O for non-blocking operation (Priority 4.2).
+    """
+    session_path = require_session_path(project_hash, session_id)
+
+    # Check cache first
+    cached = get_cached_tool_usage(session_path)
+    if cached is not None:
+        return cached
+
+    # Query and cache result
+    result = await get_session_tool_usage_async(project_hash, session_id)
+    cache_tool_usage(session_path, result)
+    return result
 
 
 @router.get("/sessions/{project_hash}/{session_id}/metrics", response_model=SessionMetricsResponse)
 async def get_session_metrics_endpoint(
     project_hash: str, session_id: str
 ) -> SessionMetricsResponse:
-    """Get detailed metrics for a session."""
-    require_session_path(project_hash, session_id)
-    return get_session_metrics(project_hash, session_id)
+    """Get detailed metrics for a session.
+
+    Uses query result caching (Priority 3.6) - results are cached until the
+    session file changes (mtime-based invalidation).
+    Uses async I/O for non-blocking operation (Priority 4.2).
+    """
+    session_path = require_session_path(project_hash, session_id)
+
+    # Check cache first
+    cached = get_cached_metrics(session_path)
+    if cached is not None:
+        return cached
+
+    # Query and cache result
+    result = await get_session_metrics_async(project_hash, session_id)
+    cache_metrics(session_path, result)
+    return result
 
 
 @router.get("/sessions/{project_hash}/{session_id}/subagents", response_model=SubagentListResponse)
 async def get_session_subagents_endpoint(
     project_hash: str, session_id: str
 ) -> SubagentListResponse:
-    """Get subagents spawned in a session."""
-    require_session_path(project_hash, session_id)
-    return get_session_subagents(project_hash, session_id)
+    """Get subagents spawned in a session.
+
+    Uses query result caching (Priority 3.6) - results are cached until the
+    session file changes (mtime-based invalidation).
+    Uses async I/O for non-blocking operation (Priority 4.2).
+    """
+    session_path = require_session_path(project_hash, session_id)
+
+    # Check cache first
+    cached = get_cached_subagents(session_path)
+    if cached is not None:
+        return cached
+
+    # Query and cache result
+    result = await get_session_subagents_async(project_hash, session_id)
+    cache_subagents(session_path, result)
+    return result
 
 
 @router.get("/sessions/{project_hash}/{session_id}/skills", response_model=SkillsResponse)
 async def get_session_skills_endpoint(project_hash: str, session_id: str) -> SkillsResponse:
-    """Get skills invoked in a session."""
+    """Get skills invoked in a session.
+
+    Uses async I/O for non-blocking operation (Priority 4.2).
+    """
     require_session_path(project_hash, session_id)
-    return get_session_skills(project_hash, session_id)
+    return await get_session_skills_async(project_hash, session_id)
 
 
 @router.get(
@@ -717,26 +922,38 @@ async def get_session_skills_endpoint(project_hash: str, session_id: str) -> Ski
 async def get_session_code_changes_endpoint(
     project_hash: str, session_id: str
 ) -> CodeChangesResponse:
-    """Get code changes made in a session."""
+    """Get code changes made in a session.
+
+    Uses async I/O for non-blocking operation (Priority 4.2).
+    """
     require_session_path(project_hash, session_id)
-    return get_session_code_changes(project_hash, session_id)
+    return await get_session_code_changes_async(project_hash, session_id)
 
 
 @router.get("/sessions/{project_hash}/{session_id}/errors", response_model=ErrorsResponse)
 async def get_session_errors_endpoint(project_hash: str, session_id: str) -> ErrorsResponse:
-    """Get errors from a session."""
+    """Get errors from a session.
+
+    Uses async I/O for non-blocking operation (Priority 4.2).
+    """
     require_session_path(project_hash, session_id)
-    return get_session_errors(project_hash, session_id)
+    return await get_session_errors_async(project_hash, session_id)
 
 
 @router.get("/sessions/{project_hash}/{session_id}/commands", response_model=CommandsResponse)
 async def get_session_commands(project_hash: str, session_id: str) -> CommandsResponse:
-    """Get user commands with statistics for a session."""
+    """Get user commands with statistics for a session.
+
+    Optimized to use session views for reduced I/O (Priority 2.3).
+    """
     session_path = require_session_path(project_hash, session_id)
+
+    # Use session view for efficient querying
+    source = get_session_view_query(session_path)
 
     with get_connection() as conn:
         try:
-            result = conn.execute(USER_COMMANDS_QUERY.format(path=str(session_path))).fetchall()
+            result = conn.execute(USER_COMMANDS_QUERY_V2.format(source=source)).fetchall()
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e)) from e
 

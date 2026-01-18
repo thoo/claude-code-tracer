@@ -24,9 +24,11 @@ from ..models.responses import (
     ToolUsageResponse,
     ToolUsageStats,
 )
+from ..utils.datetime import normalize_datetime, now_utc, parse_timestamp
 from .database import (
     get_connection,
     get_session_path,
+    get_session_view_query,
     get_subagent_files_for_session,
     get_subagent_path_for_session,
     list_sessions,
@@ -35,31 +37,24 @@ from .metrics import calculate_cache_hit_rate, calculate_cost, count_lines_chang
 from .queries import (
     AGGREGATE_ALL_PROJECTS_QUERY,
     AGGREGATE_PROJECT_SESSIONS_QUERY,
-    CODE_CHANGES_QUERY,
+    CODE_CHANGES_QUERY_V2,
     ERROR_COUNT_GLOB_QUERY,
-    ERROR_COUNT_QUERY,
-    MESSAGE_COUNT_QUERY,
-    SESSION_STATUS_QUERY,
-    SESSION_TIMERANGE_QUERY,
-    SKILL_CALLS_QUERY,
-    SUBAGENT_CALLS_WITH_AGENT_ID_QUERY,
+    ERROR_COUNT_QUERY_V2,
+    MESSAGE_COUNT_QUERY_V2,
+    SESSION_STATUS_QUERY_V2,
+    SESSION_TIMERANGE_QUERY_V2,
+    SKILL_CALLS_QUERY_V2,
+    SUBAGENT_CALLS_WITH_AGENT_ID_QUERY_V2,
     TOKEN_USAGE_BY_MODEL_GLOB_QUERY,
-    TOKEN_USAGE_BY_MODEL_QUERY,
-    TOKEN_USAGE_QUERY,
-    TOOL_USAGE_QUERY,
+    TOKEN_USAGE_BY_MODEL_QUERY_V2,
+    TOKEN_USAGE_QUERY_V2,
+    TOOL_USAGE_QUERY_V2,
+    make_source_query,
 )
 
 
-def _parse_timestamp(value: str | datetime | None) -> datetime | None:
-    """Parse a timestamp value that may be a string or datetime."""
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except (ValueError, AttributeError):
-        return None
+# Use standardized datetime utility (Priority 4.5)
+_parse_timestamp = parse_timestamp
 
 
 def _parse_token_usage_from_row(row: tuple) -> TokenUsage:
@@ -103,9 +98,17 @@ def _parse_token_usage(result: tuple | None) -> TokenUsage:
     )
 
 
-def _get_error_count(conn: DuckDBPyConnection, path: Path) -> int:
-    """Get error count from a session file."""
-    result = _execute_query(conn, ERROR_COUNT_QUERY.format(path=str(path)), (0,))
+def _get_error_count(conn: DuckDBPyConnection, path: Path, source: str | None = None) -> int:
+    """Get error count from a session file.
+
+    Args:
+        conn: DuckDB connection
+        path: Path to session file
+        source: Optional pre-computed source query string. If not provided, will be computed.
+    """
+    if source is None:
+        source = get_session_view_query(path)
+    result = _execute_query(conn, ERROR_COUNT_QUERY_V2.format(source=source), (0,))
     return result[0] if result else 0
 
 
@@ -121,13 +124,17 @@ def _accumulate_subagent_data(
     Modifies tokens in place. If cost_accumulator is provided, accumulates detailed costs.
     If models_used is provided, appends unique models.
 
+    Uses session views for each subagent file to reduce I/O.
+
     Returns: Total cost from all subagents.
     """
     total_cost = 0.0
 
     for subagent_path in subagent_files:
+        # Use session view for each subagent file
+        source = get_session_view_query(subagent_path)
         model_rows = _execute_query_all(
-            conn, TOKEN_USAGE_BY_MODEL_QUERY.format(path=str(subagent_path))
+            conn, TOKEN_USAGE_BY_MODEL_QUERY_V2.format(source=source)
         )
         for row in model_rows:
             model = row[0]
@@ -161,12 +168,22 @@ def _count_subagent_errors(conn: DuckDBPyConnection, subagent_files: list[Path])
     return sum(_get_error_count(conn, path) for path in subagent_files)
 
 
-def _determine_session_status(conn: DuckDBPyConnection, path_str: str, session_path: Path) -> str:
-    """Determine session status based on file state and content."""
-    file_mtime = datetime.fromtimestamp(session_path.stat().st_mtime, tz=timezone.utc)
-    seconds_since_modified = (datetime.now(timezone.utc) - file_mtime).total_seconds()
+def _determine_session_status(
+    conn: DuckDBPyConnection, session_path: Path, source: str | None = None
+) -> str:
+    """Determine session status based on file state and content.
 
-    status_result = _execute_query(conn, SESSION_STATUS_QUERY.format(path=path_str))
+    Args:
+        conn: DuckDB connection
+        session_path: Path to session file
+        source: Optional pre-computed source query string. If not provided, will be computed.
+    """
+    file_mtime = datetime.fromtimestamp(session_path.stat().st_mtime, tz=timezone.utc)
+    seconds_since_modified = (now_utc() - file_mtime).total_seconds()
+
+    if source is None:
+        source = get_session_view_query(session_path)
+    status_result = _execute_query(conn, SESSION_STATUS_QUERY_V2.format(source=source))
     if not status_result:
         return "running" if seconds_since_modified < 60 else "unknown"
 
@@ -187,20 +204,27 @@ def _determine_session_status(conn: DuckDBPyConnection, path_str: str, session_p
 def _cached_session_summary_impl(
     path_str: str, mtime: float, project_hash: str, session_id: str
 ) -> SessionSummary:
-    """Cached implementation of session summary parsing."""
+    """Cached implementation of session summary parsing.
+
+    Uses session views to avoid re-parsing the JSONL file for each query (Priority 2.3).
+    All queries share the same session view, significantly reducing I/O.
+    """
     session_path = Path(path_str)
 
     with get_connection() as conn:
-        token_result = _execute_query(conn, TOKEN_USAGE_QUERY.format(path=path_str))
+        # Create/reuse session view for all queries (Priority 2.3 optimization)
+        source = get_session_view_query(session_path)
+
+        token_result = _execute_query(conn, TOKEN_USAGE_QUERY_V2.format(source=source))
         tokens = _parse_token_usage(token_result)
 
-        count_result = _execute_query(conn, MESSAGE_COUNT_QUERY.format(path=path_str), (0, 0, 0))
+        count_result = _execute_query(conn, MESSAGE_COUNT_QUERY_V2.format(source=source), (0, 0, 0))
         message_count = count_result[0] if count_result else 0
 
-        tool_result = _execute_query_all(conn, TOOL_USAGE_QUERY.format(path=path_str))
+        tool_result = _execute_query_all(conn, TOOL_USAGE_QUERY_V2.format(source=source))
         tool_calls = sum(row[1] for row in tool_result)
 
-        time_result = _execute_query(conn, SESSION_TIMERANGE_QUERY.format(path=path_str))
+        time_result = _execute_query(conn, SESSION_TIMERANGE_QUERY_V2.format(source=source))
         start_time = (
             _parse_timestamp(time_result[0]) if time_result and time_result[0] else datetime.now()
         )
@@ -212,7 +236,7 @@ def _cached_session_summary_impl(
 
         # Calculate cost per model for accurate total
         model_tokens_result = _execute_query_all(
-            conn, TOKEN_USAGE_BY_MODEL_QUERY.format(path=path_str)
+            conn, TOKEN_USAGE_BY_MODEL_QUERY_V2.format(source=source)
         )
         total_cost = 0.0
         for row in model_tokens_result:
@@ -232,11 +256,13 @@ def _cached_session_summary_impl(
             total_cost += sub_cost
 
         # Count errors from main session and subagents using batch query
-        error_count = _get_error_count(conn, session_path)
+        # Reuse source for main session error count
+        error_count = _get_error_count(conn, session_path, source)
         if subagent_files:
             error_count += get_batch_error_count(subagent_files)
 
-        status = _determine_session_status(conn, path_str, session_path)
+        # Reuse source for status determination
+        status = _determine_session_status(conn, session_path, source)
 
         return SessionSummary(
             session_id=session_id,
@@ -263,13 +289,17 @@ def parse_session_summary(project_hash: str, session_id: str) -> SessionSummary 
 
 
 def get_session_tool_usage(project_hash: str, session_id: str) -> ToolUsageResponse:
-    """Get tool usage statistics for a session."""
+    """Get tool usage statistics for a session.
+
+    Uses session views for reduced I/O (Priority 2.3).
+    """
     session_path = get_session_path(project_hash, session_id)
     if not session_path.exists():
         return ToolUsageResponse()
 
     with get_connection() as conn:
-        result = _execute_query_all(conn, TOOL_USAGE_QUERY.format(path=str(session_path)))
+        source = get_session_view_query(session_path)
+        result = _execute_query_all(conn, TOOL_USAGE_QUERY_V2.format(source=source))
         tools = [
             ToolUsageStats(
                 name=row[0],
@@ -284,30 +314,34 @@ def get_session_tool_usage(project_hash: str, session_id: str) -> ToolUsageRespo
 
 
 def get_session_metrics(project_hash: str, session_id: str) -> SessionMetricsResponse:
-    """Get detailed metrics for a session."""
+    """Get detailed metrics for a session.
+
+    Uses session views for reduced I/O (Priority 2.3).
+    """
     session_path = get_session_path(project_hash, session_id)
     if not session_path.exists():
         return SessionMetricsResponse()
 
     with get_connection() as conn:
-        path_str = str(session_path)
+        # Create/reuse session view for all queries
+        source = get_session_view_query(session_path)
 
-        token_result = _execute_query(conn, TOKEN_USAGE_QUERY.format(path=path_str))
+        token_result = _execute_query(conn, TOKEN_USAGE_QUERY_V2.format(source=source))
         if not token_result:
             return SessionMetricsResponse()
         tokens = _parse_token_usage(token_result)
 
         model_tokens_result = _execute_query_all(
-            conn, TOKEN_USAGE_BY_MODEL_QUERY.format(path=path_str)
+            conn, TOKEN_USAGE_BY_MODEL_QUERY_V2.format(source=source)
         )
 
-        count_result = _execute_query(conn, MESSAGE_COUNT_QUERY.format(path=path_str), (0, 0, 0))
+        count_result = _execute_query(conn, MESSAGE_COUNT_QUERY_V2.format(source=source), (0, 0, 0))
         message_count = count_result[0] if count_result else 0
 
-        tool_result = _execute_query_all(conn, TOOL_USAGE_QUERY.format(path=path_str))
+        tool_result = _execute_query_all(conn, TOOL_USAGE_QUERY_V2.format(source=source))
         tool_calls = sum(row[1] for row in tool_result)
 
-        time_result = _execute_query(conn, SESSION_TIMERANGE_QUERY.format(path=path_str))
+        time_result = _execute_query(conn, SESSION_TIMERANGE_QUERY_V2.format(source=source))
         duration_seconds = 0
         if time_result and time_result[0] and time_result[1]:
             start_ts = _parse_timestamp(time_result[0])
@@ -353,7 +387,7 @@ def get_session_metrics(project_hash: str, session_id: str) -> SessionMetricsRes
         )
 
         # Count errors from main session and subagents using batch query
-        error_count = _get_error_count(conn, session_path)
+        error_count = _get_error_count(conn, session_path, source)
         if subagent_files:
             error_count += get_batch_error_count(subagent_files)
 
@@ -377,24 +411,27 @@ def _get_subagent_details(
 ) -> tuple[str, datetime | None, TokenUsage, int]:
     """Get details for a subagent from its log file.
 
+    Uses session views for reduced I/O (Priority 2.3).
+
     Returns: (status, end_time, tokens, tool_calls)
     """
     subagent_path = get_subagent_path_for_session(project_hash, session_id, agent_id)
     if not subagent_path or not subagent_path.exists():
         return ("unknown", None, TokenUsage(), 0)
 
-    path_str = str(subagent_path)
+    # Use session view for all subagent queries
+    source = get_session_view_query(subagent_path)
 
     # Get token usage
-    token_result = _execute_query(conn, TOKEN_USAGE_QUERY.format(path=path_str))
+    token_result = _execute_query(conn, TOKEN_USAGE_QUERY_V2.format(source=source))
     tokens = _parse_token_usage(token_result)
 
     # Get tool call count
-    tool_result = _execute_query_all(conn, TOOL_USAGE_QUERY.format(path=path_str))
+    tool_result = _execute_query_all(conn, TOOL_USAGE_QUERY_V2.format(source=source))
     tool_calls = sum(row[1] for row in tool_result)
 
     # Get time range to determine end_time and status
-    time_result = _execute_query(conn, SESSION_TIMERANGE_QUERY.format(path=path_str))
+    time_result = _execute_query(conn, SESSION_TIMERANGE_QUERY_V2.format(source=source))
     end_time = _parse_timestamp(time_result[1]) if time_result and time_result[1] else None
 
     status = "completed" if end_time else "running"
@@ -403,15 +440,21 @@ def _get_subagent_details(
 
 
 def get_session_subagents(project_hash: str, session_id: str) -> SubagentListResponse:
-    """Get subagents spawned in a session with full details."""
+    """Get subagents spawned in a session with full details.
+
+    Uses session views for reduced I/O (Priority 2.3).
+    """
     session_path = get_session_path(project_hash, session_id)
     if not session_path.exists():
         return SubagentListResponse()
 
     with get_connection() as conn:
+        # Use session view for main session query
+        source = get_session_view_query(session_path)
+
         # Get subagent calls with proper agent IDs from progress entries
         result = _execute_query_all(
-            conn, SUBAGENT_CALLS_WITH_AGENT_ID_QUERY.format(path=str(session_path))
+            conn, SUBAGENT_CALLS_WITH_AGENT_ID_QUERY_V2.format(source=source)
         )
 
         subagents = []
@@ -446,13 +489,17 @@ def get_session_subagents(project_hash: str, session_id: str) -> SubagentListRes
 
 
 def get_session_skills(project_hash: str, session_id: str) -> SkillsResponse:
-    """Get skills invoked in a session."""
+    """Get skills invoked in a session.
+
+    Uses session views for reduced I/O (Priority 2.3).
+    """
     session_path = get_session_path(project_hash, session_id)
     if not session_path.exists():
         return SkillsResponse()
 
     with get_connection() as conn:
-        result = _execute_query_all(conn, SKILL_CALLS_QUERY.format(path=str(session_path)))
+        source = get_session_view_query(session_path)
+        result = _execute_query_all(conn, SKILL_CALLS_QUERY_V2.format(source=source))
 
         skill_counts: dict[str, dict[str, Any]] = {}
         for row in result:
@@ -481,13 +528,17 @@ def get_session_skills(project_hash: str, session_id: str) -> SkillsResponse:
 
 
 def get_session_code_changes(project_hash: str, session_id: str) -> CodeChangesResponse:
-    """Get code changes made in a session."""
+    """Get code changes made in a session.
+
+    Uses session views for reduced I/O (Priority 2.3).
+    """
     session_path = get_session_path(project_hash, session_id)
     if not session_path.exists():
         return CodeChangesResponse()
 
     with get_connection() as conn:
-        result = _execute_query_all(conn, CODE_CHANGES_QUERY.format(path=str(session_path)))
+        source = get_session_view_query(session_path)
+        result = _execute_query_all(conn, CODE_CHANGES_QUERY_V2.format(source=source))
 
         files_created = 0
         files_modified = 0
@@ -585,11 +636,7 @@ def _parse_error_from_line(line: str) -> ErrorEntry | None:
     return None
 
 
-def _normalize_datetime(dt: datetime | None) -> datetime | None:
-    """Normalize datetime to UTC for safe comparison."""
-    if dt is None:
-        return None
-    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+# _normalize_datetime is now imported from utils.datetime (Priority 4.5)
 
 
 def get_project_total_metrics(
@@ -708,11 +755,11 @@ def _get_project_total_metrics_fallback(
         cache_read += summary.tokens.cache_read_input_tokens
         total_cost += summary.cost
 
-        start = _normalize_datetime(summary.start_time)
+        start = parse_timestamp(summary.start_time)
         if start and (first_activity is None or start < first_activity):
             first_activity = start
 
-        end = _normalize_datetime(summary.end_time)
+        end = parse_timestamp(summary.end_time)
         if end and (last_activity is None or end > last_activity):
             last_activity = end
 

@@ -8,16 +8,48 @@ from fastapi.responses import ORJSONResponse
 from loguru import logger
 
 from .routers import metrics, sessions, subagents
+from .services.cache import get_persistent_cache
+from .services.database import DuckDBPool, cleanup_stale_views
+from .services.index import get_global_index
 from .services.metrics import init_pricing
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Handle application startup and shutdown events."""
+    """Handle application startup and shutdown."""
     logger.info("Starting Claude Code Tracer API")
     init_pricing()
+
+    # Warm up DuckDB connection
+    conn = DuckDBPool.get_connection()
+    conn.execute("SELECT 1")
+    logger.info("DuckDB connection ready")
+
+    # Initialize persistent cache (loads from disk)
+    cache = get_persistent_cache()
+    logger.info("Persistent cache initialized")
+
+    # Start background index scanner (Priority 4.1)
+    index = get_global_index()
+    await index.start_background_scanner()
+    logger.info("Background index scanner started")
+
     yield
+
     logger.info("Shutting down Claude Code Tracer API")
+
+    # Stop background scanner
+    await index.stop_background_scanner()
+
+    # Save persistent cache to disk
+    cache.save()
+    logger.info("Persistent cache saved")
+
+    # Clean up session views before closing connection
+    cleaned = cleanup_stale_views()
+    if cleaned:
+        logger.info(f"Cleaned up {cleaned} stale session views")
+    DuckDBPool.close()
 
 
 app = FastAPI(

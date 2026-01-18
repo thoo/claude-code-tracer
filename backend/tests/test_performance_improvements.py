@@ -101,11 +101,13 @@ def test_get_batch_subagent_metrics(complex_project_structure):
 @pytest.mark.asyncio
 async def test_get_projects_api_integration():
     """Test that get_projects API endpoint uses optimized metrics."""
+    from unittest.mock import AsyncMock
+
     mock_projects = [
         {"path_hash": "p1", "project_path": "/path/p1", "session_count": 0},
         {"path_hash": "p2", "project_path": "/path/p2", "session_count": 0}
     ]
-    
+
     mock_metrics = {
         "p1": {
             "session_count": 5,
@@ -115,21 +117,22 @@ async def test_get_projects_api_integration():
         }
         # p2 is missing from metrics (e.g. no sessions), should fallback or be empty
     }
-    
-    with patch("claude_code_tracer.routers.sessions.list_projects", return_value=mock_projects):
-        with patch("claude_code_tracer.routers.sessions.get_all_projects_metrics", return_value=mock_metrics):
-            with patch("claude_code_tracer.routers.sessions.get_project_total_metrics", return_value={}) as mock_fallback:
-                
+
+    # Patch the async functions where they are imported in the router (Phase 4.2 refactoring)
+    with patch("claude_code_tracer.routers.sessions.list_projects_async", new_callable=AsyncMock, return_value=mock_projects):
+        with patch("claude_code_tracer.routers.sessions.get_all_projects_metrics_async", new_callable=AsyncMock, return_value=mock_metrics):
+            with patch("claude_code_tracer.routers.sessions.get_project_total_metrics_async", new_callable=AsyncMock, return_value={}) as mock_fallback:
+
                 response = await get_projects()
-                
+
                 assert len(response.projects) == 2
-                
+
                 # Check p1 (from batch metrics)
                 p1 = next(p for p in response.projects if p.path_hash == "p1")
                 assert p1.session_count == 5
                 assert p1.tokens.input_tokens == 1000
                 assert p1.total_cost == 0.5
-                
+
                 # Check p2 (fallback)
                 p2 = next(p for p in response.projects if p.path_hash == "p2")
                 # Ensure fallback was called for p2

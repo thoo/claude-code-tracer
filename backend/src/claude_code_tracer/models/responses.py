@@ -117,14 +117,43 @@ class MessageDetailResponse(BaseModel):
     total_messages: int = 0
 
 
+class MessageSummary(BaseModel):
+    """Lightweight message summary for list views.
+
+    Contains only essential metadata, deferring full content to detail views.
+    This reduces payload size and query overhead for message listings.
+    (Priority 3.5 optimization)
+    """
+
+    uuid: str
+    type: str
+    timestamp: datetime
+    preview: str = ""  # First 100 chars of content
+    model: str | None = None
+    tool_names: str = ""
+    has_error: bool = False
+
+
 class MessageListResponse(BaseModel):
-    """Paginated messages response."""
+    """Paginated messages response.
+
+    Supports both traditional page-based pagination and cursor-based pagination.
+
+    Cursor-based pagination (Priority 3.1 optimization):
+    - Use `cursor` parameter instead of `page` for efficient deep pagination
+    - `next_cursor` contains the cursor for the next page
+    - `has_more` indicates if more results are available
+    """
 
     messages: list[MessageResponse] = Field(default_factory=list)
     total: int = 0
     page: int = 1
     per_page: int = 50
     total_pages: int = 0
+
+    # Cursor-based pagination fields (Priority 3.1)
+    next_cursor: str | None = None
+    has_more: bool = False
 
 
 class ToolFilterOption(BaseModel):

@@ -53,8 +53,19 @@ class DuckDBPool:
 
 @contextmanager
 def get_connection() -> Generator[duckdb.DuckDBPyConnection, None, None]:
-    """Get persistent DuckDB connection."""
-    yield DuckDBPool.get_connection()
+    """Get a cursor for the persistent DuckDB connection.
+
+    Yields a cursor (which allows concurrent execution from multiple threads)
+    instead of the raw connection. This prevents heap corruption issues
+    when multiple threads try to execute queries on the same connection object.
+    """
+    conn = DuckDBPool.get_connection()
+    # Create a new cursor for this thread/request
+    cursor = conn.cursor()
+    try:
+        yield cursor
+    finally:
+        cursor.close()
 
 
 def get_or_create_session_view(session_path: Path) -> str:
