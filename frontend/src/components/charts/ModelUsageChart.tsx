@@ -42,9 +42,9 @@ export default function ModelUsageChart({ models }: ModelUsageChartProps) {
             if (active && payload && payload.length) {
               const entry = payload[0].payload;
               return (
-                <div className="rounded-lg border border-gray-200 bg-white p-3 shadow-lg">
-                  <p className="font-medium text-gray-900">{entry.fullName}</p>
-                  <p className="text-sm text-gray-600">
+                <div className="rounded-lg border border-gray-200 dark:border-surface-700 bg-white dark:bg-surface-800 p-3 shadow-lg">
+                  <p className="font-medium text-gray-900 dark:text-surface-100">{entry.fullName}</p>
+                  <p className="text-sm text-gray-600 dark:text-surface-400">
                     <span className="font-medium">{entry.value}</span> messages
                   </p>
                 </div>

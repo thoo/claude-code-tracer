@@ -14,8 +14,9 @@ import xml from 'react-syntax-highlighter/dist/esm/languages/hljs/xml';
 import sql from 'react-syntax-highlighter/dist/esm/languages/hljs/sql';
 import yaml from 'react-syntax-highlighter/dist/esm/languages/hljs/yaml';
 import markdown from 'react-syntax-highlighter/dist/esm/languages/hljs/markdown';
-import { githubGist } from 'react-syntax-highlighter/dist/esm/styles/hljs';
+import { atomOneDark, atomOneLight } from 'react-syntax-highlighter/dist/esm/styles/hljs';
 import { useMessageDetail } from '../hooks/useApi';
+import { useTheme } from '../hooks/useTheme';
 import { formatDateTime, formatTokens } from '../lib/formatting';
 import Badge from './common/Badge';
 import LoadingSpinner from './common/LoadingSpinner';
@@ -204,8 +205,8 @@ export default function MessageDetailModal({
 
   if (isLoading) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
-        <div className="bg-white rounded-lg p-8" onClick={(e) => e.stopPropagation()}>
+      <div className="modal-overlay flex items-center justify-center" onClick={onClose}>
+        <div className="modal-content p-8" onClick={(e) => e.stopPropagation()}>
           <LoadingSpinner />
         </div>
       </div>
@@ -218,37 +219,37 @@ export default function MessageDetailModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      className="modal-overlay flex items-center justify-center p-4"
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col"
+        className="modal-content max-w-4xl w-full max-h-[90vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
-          <h2 className="text-xl font-semibold text-gray-900">Message Details</h2>
+        <div className="flex items-center justify-between border-b border-gray-200 dark:border-surface-700 px-6 py-4">
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-surface-100">Message Details</h2>
           <div className="flex items-center gap-4">
             <button
               onClick={() => navigateToIndex(message.message_index - 1)}
               disabled={message.message_index <= 1}
-              className="px-3 py-1 text-sm border rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
+              className="px-3 py-1.5 text-sm border border-gray-300 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-800 text-gray-700 dark:text-surface-300 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-gray-50 dark:hover:bg-surface-700 hover:border-gray-400 dark:hover:border-surface-600 transition-colors"
             >
               &larr; Previous
             </button>
-            <span className="text-sm text-gray-500">
+            <span className="text-sm text-gray-500 dark:text-surface-400 font-mono">
               {message.message_index} of {message.total_messages}
             </span>
             <button
               onClick={() => navigateToIndex(message.message_index + 1)}
               disabled={message.message_index >= message.total_messages}
-              className="px-3 py-1 text-sm border rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
+              className="px-3 py-1.5 text-sm border border-gray-300 dark:border-surface-700 rounded-lg bg-white dark:bg-surface-800 text-gray-700 dark:text-surface-300 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-gray-50 dark:hover:bg-surface-700 hover:border-gray-400 dark:hover:border-surface-600 transition-colors"
             >
               Next &rarr;
             </button>
             <button
               onClick={onClose}
-              className="text-gray-400 hover:text-gray-600 text-2xl leading-none"
+              className="text-gray-400 hover:text-gray-600 dark:text-surface-400 dark:hover:text-surface-300 text-2xl leading-none transition-colors"
             >
               &times;
             </button>
@@ -259,18 +260,18 @@ export default function MessageDetailModal({
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
           {/* Metadata */}
           <div className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-sm">
-            <span className="text-gray-500 font-medium">Type:</span>
+            <span className="text-gray-500 dark:text-surface-400 font-medium">Type:</span>
             <span>
-              <Badge variant={message.type === 'assistant' ? 'primary' : message.type === 'hook' ? 'secondary' : 'gray'}>
+              <Badge variant={message.type === 'assistant' ? 'primary' : message.type === 'user' ? 'teal' : message.type === 'tool_result' ? 'purple' : message.type === 'hook' ? 'secondary' : 'gray'}>
                 {message.type}
               </Badge>
             </span>
 
-            <span className="text-gray-500 font-medium">Timestamp:</span>
-            <span className="text-gray-900">{formatDateTime(message.timestamp)}</span>
+            <span className="text-gray-500 dark:text-surface-400 font-medium">Timestamp:</span>
+            <span className="text-gray-900 dark:text-surface-200 font-mono">{formatDateTime(message.timestamp)}</span>
 
-            <span className="text-gray-500 font-medium">Session ID:</span>
-            <span className="text-gray-900 font-mono text-xs flex items-center gap-2">
+            <span className="text-gray-500 dark:text-surface-400 font-medium">Session ID:</span>
+            <span className="text-gray-900 dark:text-surface-200 font-mono text-xs flex items-center gap-2">
               {message.session_id}
               <CopyButton
                 copied={copiedField === 'session'}
@@ -280,8 +281,8 @@ export default function MessageDetailModal({
 
             {message.message_id && (
               <>
-                <span className="text-gray-500 font-medium">Message ID:</span>
-                <span className="text-gray-900 font-mono text-xs flex items-center gap-2">
+                <span className="text-gray-500 dark:text-surface-400 font-medium">Message ID:</span>
+                <span className="text-gray-900 dark:text-surface-200 font-mono text-xs flex items-center gap-2">
                   {message.message_id}
                   <CopyButton
                     copied={copiedField === 'message'}
@@ -293,15 +294,15 @@ export default function MessageDetailModal({
 
             {message.model && (
               <>
-                <span className="text-gray-500 font-medium">Model:</span>
-                <span className="text-gray-900">{message.model}</span>
+                <span className="text-gray-500 dark:text-surface-400 font-medium">Model:</span>
+                <span className="text-gray-900 dark:text-surface-200">{message.model}</span>
               </>
             )}
 
             {(message.tokens.input_tokens > 0 || message.tokens.output_tokens > 0) && (
               <>
-                <span className="text-gray-500 font-medium">Tokens:</span>
-                <div className="text-gray-900">
+                <span className="text-gray-500 dark:text-surface-400 font-medium">Tokens:</span>
+                <div className="text-gray-700 dark:text-surface-300 font-mono text-xs">
                   <div>Input: {formatTokens(message.tokens.input_tokens)}</div>
                   <div>Output: {formatTokens(message.tokens.output_tokens)}</div>
                   {message.tokens.cache_creation_input_tokens > 0 && (
@@ -316,8 +317,8 @@ export default function MessageDetailModal({
 
             {message.cwd && (
               <>
-                <span className="text-gray-500 font-medium">Working Dir:</span>
-                <span className="text-gray-900 font-mono text-xs">{message.cwd}</span>
+                <span className="text-gray-500 dark:text-surface-400 font-medium">Working Dir:</span>
+                <span className="text-gray-900 dark:text-surface-200 font-mono text-xs">{message.cwd}</span>
               </>
             )}
           </div>
@@ -325,8 +326,8 @@ export default function MessageDetailModal({
           {/* Message Content */}
           {message.content && (
             <div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">Message Content</h3>
-              <div className="bg-gray-50 rounded-lg p-4 text-sm text-gray-700">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-surface-100 mb-2">Message Content</h3>
+              <div className="bg-gray-50 dark:bg-surface-800 rounded-lg p-4 text-sm text-gray-900 dark:text-surface-100 border border-gray-200 dark:border-surface-700">
                 {(() => {
                   // Check for hook messages first
                   if (message.type === 'hook') {
@@ -360,7 +361,7 @@ export default function MessageDetailModal({
                   }
 
                   return (
-                    <div className="prose prose-sm max-w-none prose-pre:p-0 prose-pre:bg-transparent">
+                    <div className="prose prose-sm dark:prose-invert max-w-none prose-pre:p-0 prose-pre:bg-transparent prose-p:text-gray-900 dark:prose-p:text-surface-100 prose-headings:text-gray-900 dark:prose-headings:text-surface-100 prose-strong:text-gray-900 dark:prose-strong:text-surface-100 prose-li:text-gray-900 dark:prose-li:text-surface-100">
                       <ReactMarkdown
                         remarkPlugins={[remarkGfm]}
                         components={{
@@ -374,21 +375,21 @@ export default function MessageDetailModal({
                                 {...props}
                               />
                             ) : (
-                              <code className={`${className} bg-gray-100 px-1 py-0.5 rounded text-gray-800`} {...props}>
+                              <code className={`${className} bg-gray-200 dark:bg-surface-700 px-1 py-0.5 rounded text-gray-900 dark:text-surface-100`} {...props}>
                                 {children}
                               </code>
                             );
                           },
                           // Style other markdown elements
-                          p: ({ children }) => <p className="mb-4 last:mb-0">{children}</p>,
-                          ul: ({ children }) => <ul className="list-disc pl-4 mb-4 space-y-1">{children}</ul>,
-                          ol: ({ children }) => <ol className="list-decimal pl-4 mb-4 space-y-1">{children}</ol>,
-                          li: ({ children }) => <li>{children}</li>,
-                          h1: ({ children }) => <h1 className="text-xl font-bold mb-4 mt-6">{children}</h1>,
-                          h2: ({ children }) => <h2 className="text-lg font-bold mb-3 mt-5">{children}</h2>,
-                          h3: ({ children }) => <h3 className="text-base font-bold mb-2 mt-4">{children}</h3>,
-                          blockquote: ({ children }) => <blockquote className="border-l-4 border-gray-200 pl-4 italic my-4">{children}</blockquote>,
-                          a: ({ href, children }) => <a href={href} className="text-primary-600 hover:underline" target="_blank" rel="noopener noreferrer">{children}</a>,
+                          p: ({ children }) => <p className="mb-4 last:mb-0 text-gray-900 dark:text-surface-100">{children}</p>,
+                          ul: ({ children }) => <ul className="list-disc pl-4 mb-4 space-y-1 text-gray-900 dark:text-surface-100">{children}</ul>,
+                          ol: ({ children }) => <ol className="list-decimal pl-4 mb-4 space-y-1 text-gray-900 dark:text-surface-100">{children}</ol>,
+                          li: ({ children }) => <li className="text-gray-900 dark:text-surface-100">{children}</li>,
+                          h1: ({ children }) => <h1 className="text-xl font-bold mb-4 mt-6 text-gray-900 dark:text-surface-100">{children}</h1>,
+                          h2: ({ children }) => <h2 className="text-lg font-bold mb-3 mt-5 text-gray-900 dark:text-surface-100">{children}</h2>,
+                          h3: ({ children }) => <h3 className="text-base font-bold mb-2 mt-4 text-gray-900 dark:text-surface-100">{children}</h3>,
+                          blockquote: ({ children }) => <blockquote className="border-l-4 border-gray-300 dark:border-surface-600 pl-4 italic my-4 text-gray-700 dark:text-surface-200">{children}</blockquote>,
+                          a: ({ href, children }) => <a href={href} className="text-accent-600 dark:text-accent-400 hover:underline" target="_blank" rel="noopener noreferrer">{children}</a>,
                         }}
                       >
                         {escapeMarkdown(message.content)}
@@ -403,7 +404,7 @@ export default function MessageDetailModal({
           {/* Tools Used */}
           {message.tools.length > 0 && (
             <div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">Tools Used</h3>
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-surface-100 mb-2">Tools Used</h3>
               <div className="space-y-4">
                 {message.tools.map((tool, index) => (
                   <ToolUseDisplay key={tool.id || index} tool={tool} />
@@ -415,7 +416,7 @@ export default function MessageDetailModal({
           {/* Tool Results */}
           {message.tool_results.length > 0 && (
             <div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">Tool Results</h3>
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-surface-100 mb-2">Tool Results</h3>
               <div className="space-y-4">
                 {message.tool_results.map((result, index) => {
                   const tool = message.tools.find(t => t.id === result.tool_use_id);
@@ -443,7 +444,7 @@ function ContentBlockDisplay({ block }: { block: any }) {
   switch (block.type) {
     case 'text':
       return (
-        <div className="prose prose-sm max-w-none prose-pre:p-0 prose-pre:bg-transparent">
+        <div className="prose prose-sm dark:prose-invert max-w-none prose-pre:p-0 prose-pre:bg-transparent prose-p:text-gray-900 dark:prose-p:text-surface-100 prose-headings:text-gray-900 dark:prose-headings:text-surface-100 prose-strong:text-gray-900 dark:prose-strong:text-surface-100 prose-li:text-gray-900 dark:prose-li:text-surface-100">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             components={{
@@ -457,20 +458,20 @@ function ContentBlockDisplay({ block }: { block: any }) {
                     {...props}
                   />
                 ) : (
-                  <code className={`${className} bg-gray-100 px-1 py-0.5 rounded text-gray-800`} {...props}>
+                  <code className={`${className} bg-gray-200 dark:bg-surface-700 px-1 py-0.5 rounded text-gray-900 dark:text-surface-100`} {...props}>
                     {children}
                   </code>
                 );
               },
-              p: ({ children }) => <p className="mb-4 last:mb-0">{children}</p>,
-              ul: ({ children }) => <ul className="list-disc pl-4 mb-4 space-y-1">{children}</ul>,
-              ol: ({ children }) => <ol className="list-decimal pl-4 mb-4 space-y-1">{children}</ol>,
-              li: ({ children }) => <li>{children}</li>,
-              h1: ({ children }) => <h1 className="text-xl font-bold mb-4 mt-6">{children}</h1>,
-              h2: ({ children }) => <h2 className="text-lg font-bold mb-3 mt-5">{children}</h2>,
-              h3: ({ children }) => <h3 className="text-base font-bold mb-2 mt-4">{children}</h3>,
-              blockquote: ({ children }) => <blockquote className="border-l-4 border-gray-200 pl-4 italic my-4">{children}</blockquote>,
-              a: ({ href, children }) => <a href={href} className="text-primary-600 hover:underline" target="_blank" rel="noopener noreferrer">{children}</a>,
+              p: ({ children }) => <p className="mb-4 last:mb-0 text-gray-900 dark:text-surface-100">{children}</p>,
+              ul: ({ children }) => <ul className="list-disc pl-4 mb-4 space-y-1 text-gray-900 dark:text-surface-100">{children}</ul>,
+              ol: ({ children }) => <ol className="list-decimal pl-4 mb-4 space-y-1 text-gray-900 dark:text-surface-100">{children}</ol>,
+              li: ({ children }) => <li className="text-gray-900 dark:text-surface-100">{children}</li>,
+              h1: ({ children }) => <h1 className="text-xl font-bold mb-4 mt-6 text-gray-900 dark:text-surface-100">{children}</h1>,
+              h2: ({ children }) => <h2 className="text-lg font-bold mb-3 mt-5 text-gray-900 dark:text-surface-100">{children}</h2>,
+              h3: ({ children }) => <h3 className="text-base font-bold mb-2 mt-4 text-gray-900 dark:text-surface-100">{children}</h3>,
+              blockquote: ({ children }) => <blockquote className="border-l-4 border-gray-300 dark:border-surface-600 pl-4 italic my-4 text-gray-700 dark:text-surface-200">{children}</blockquote>,
+              a: ({ href, children }) => <a href={href} className="text-accent-600 dark:text-accent-400 hover:underline" target="_blank" rel="noopener noreferrer">{children}</a>,
             }}
           >
             {escapeMarkdown(block.text || '')}
@@ -483,14 +484,14 @@ function ContentBlockDisplay({ block }: { block: any }) {
       return <ToolResultDisplay result={block as ToolResult} />;
     case 'thinking':
       return (
-        <div className="bg-blue-50/50 border border-blue-100 p-4 rounded-lg">
-          <div className="text-xs font-semibold text-blue-600 mb-2 uppercase tracking-wider">Thinking Process</div>
-          <div className="text-sm text-blue-900 whitespace-pre-wrap leading-relaxed">{block.thinking}</div>
+        <div className="bg-highlight-500/10 border border-highlight-500/30 p-4 rounded-lg">
+          <div className="text-xs font-semibold text-highlight-400 mb-2 uppercase tracking-wider">Thinking Process</div>
+          <div className="text-sm text-gray-700 dark:text-surface-200 whitespace-pre-wrap leading-relaxed">{block.thinking}</div>
         </div>
       );
     default:
       return (
-        <div className="bg-gray-100 p-3 rounded text-xs font-mono overflow-x-auto">
+        <div className="bg-gray-100 dark:bg-surface-800 p-3 rounded text-xs font-mono overflow-x-auto text-gray-900 dark:text-surface-200">
           {JSON.stringify(block, null, 2)}
         </div>
       );
@@ -503,21 +504,21 @@ function HookContentDisplay({ content }: { content: string }) {
   switch (parsed.type) {
     case 'command':
       return (
-        <div className="border border-blue-200 rounded-lg overflow-hidden">
-          <div className="bg-blue-50 px-4 py-2 border-b border-blue-200">
-            <span className="text-blue-700 font-semibold">Slash Command</span>
+        <div className="border border-blue-200 dark:border-blue-800 rounded-lg overflow-hidden">
+          <div className="bg-blue-50 dark:bg-blue-900/30 px-4 py-2 border-b border-blue-200 dark:border-blue-800">
+            <span className="text-blue-700 dark:text-blue-300 font-semibold">Slash Command</span>
           </div>
-          <div className="p-4 space-y-2">
+          <div className="p-4 space-y-2 bg-white dark:bg-surface-900/50">
             <div className="flex items-center gap-3">
-              <span className="text-sm font-medium text-gray-500 w-20">Command:</span>
-              <code className="px-2 py-1 bg-blue-100 text-blue-800 rounded font-mono text-sm">
+              <span className="text-sm font-medium text-gray-500 dark:text-surface-400 w-20">Command:</span>
+              <code className="px-2 py-1 bg-blue-100 dark:bg-blue-900/50 text-blue-800 dark:text-blue-200 rounded font-mono text-sm">
                 {parsed.commandName}
               </code>
             </div>
             {parsed.commandArgs && (
               <div className="flex items-start gap-3">
-                <span className="text-sm font-medium text-gray-500 w-20">Args:</span>
-                <span className="text-sm text-gray-700">{parsed.commandArgs}</span>
+                <span className="text-sm font-medium text-gray-500 dark:text-surface-400 w-20">Args:</span>
+                <span className="text-sm text-gray-700 dark:text-surface-300">{parsed.commandArgs}</span>
               </div>
             )}
           </div>
@@ -526,25 +527,25 @@ function HookContentDisplay({ content }: { content: string }) {
 
     case 'caveat':
       return (
-        <div className="border border-amber-200 rounded-lg overflow-hidden">
-          <div className="bg-amber-50 px-4 py-2 border-b border-amber-200">
-            <span className="text-amber-700 font-semibold">System Notice</span>
+        <div className="border border-amber-200 dark:border-amber-800 rounded-lg overflow-hidden">
+          <div className="bg-amber-50 dark:bg-amber-900/30 px-4 py-2 border-b border-amber-200 dark:border-amber-800">
+            <span className="text-amber-700 dark:text-amber-300 font-semibold">System Notice</span>
           </div>
-          <div className="p-4">
-            <p className="text-sm text-gray-700 italic">{parsed.content}</p>
+          <div className="p-4 bg-white dark:bg-surface-900/50">
+            <p className="text-sm text-gray-700 dark:text-surface-300 italic">{parsed.content}</p>
           </div>
         </div>
       );
 
     case 'stdout':
       return (
-        <div className="border border-gray-200 rounded-lg overflow-hidden">
-          <div className="bg-gray-100 px-4 py-2 border-b border-gray-200">
-            <span className="text-gray-700 font-semibold">Command Output</span>
+        <div className="border border-gray-200 dark:border-surface-700 rounded-lg overflow-hidden">
+          <div className="bg-gray-100 dark:bg-surface-800 px-4 py-2 border-b border-gray-200 dark:border-surface-700">
+            <span className="text-gray-700 dark:text-surface-200 font-semibold">Command Output</span>
           </div>
-          <div className="p-4">
+          <div className="p-4 bg-white dark:bg-surface-900/50">
             {parsed.content && parsed.content !== '(empty)' ? (
-              <pre className="text-sm font-mono text-gray-700 whitespace-pre-wrap bg-gray-50 p-3 rounded">
+              <pre className="text-sm font-mono text-gray-700 dark:text-surface-300 whitespace-pre-wrap bg-gray-50 dark:bg-surface-950 p-3 rounded border border-gray-100 dark:border-surface-800">
                 {parsed.content}
               </pre>
             ) : (
@@ -556,12 +557,12 @@ function HookContentDisplay({ content }: { content: string }) {
 
     case 'prompt-hook':
       return (
-        <div className="border border-purple-200 rounded-lg overflow-hidden">
-          <div className="bg-purple-50 px-4 py-2 border-b border-purple-200">
-            <span className="text-purple-700 font-semibold">Prompt Hook</span>
+        <div className="border border-purple-200 dark:border-purple-800 rounded-lg overflow-hidden">
+          <div className="bg-purple-50 dark:bg-purple-900/30 px-4 py-2 border-b border-purple-200 dark:border-purple-800">
+            <span className="text-purple-700 dark:text-purple-300 font-semibold">Prompt Hook</span>
           </div>
-          <div className="p-4">
-            <pre className="text-sm font-mono text-gray-700 whitespace-pre-wrap">
+          <div className="p-4 bg-white dark:bg-surface-900/50">
+            <pre className="text-sm font-mono text-gray-700 dark:text-surface-300 whitespace-pre-wrap">
               {parsed.content}
             </pre>
           </div>
@@ -570,29 +571,31 @@ function HookContentDisplay({ content }: { content: string }) {
 
     default:
       return (
-        <div className="bg-gray-50 p-4 rounded-lg">
-          <pre className="text-sm font-mono text-gray-700 whitespace-pre-wrap">{content}</pre>
+        <div className="bg-gray-50 dark:bg-surface-800 p-4 rounded-lg border border-gray-200 dark:border-surface-700">
+          <pre className="text-sm font-mono text-gray-700 dark:text-surface-300 whitespace-pre-wrap">{content}</pre>
         </div>
       );
   }
 }
 
-function CodeBlockWithCopy({ 
-  language, 
-  content, 
-  customStyle, 
-  wrapLines, 
+function CodeBlockWithCopy({
+  language,
+  content,
+  customStyle,
+  wrapLines,
   showLineNumbers,
   lineProps
-}: { 
-  language: string; 
-  content: string; 
+}: {
+  language: string;
+  content: string;
   customStyle?: React.CSSProperties;
   wrapLines?: boolean;
   showLineNumbers?: boolean;
   lineProps?: any;
 }) {
   const [copied, setCopied] = useState(false);
+  const { resolvedTheme } = useTheme();
+  const isDark = resolvedTheme === 'dark';
 
   const handleCopy = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -602,25 +605,33 @@ function CodeBlockWithCopy({
   };
 
   return (
-    <div className="relative group">
+    <div className="relative group border border-gray-200 dark:border-none rounded-lg">
       <div className="absolute right-2 top-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
         <button
           onClick={handleCopy}
-          className="px-2 py-1 text-xs font-medium text-gray-600 bg-white/90 border border-gray-200 rounded shadow-sm hover:bg-gray-50 hover:text-gray-900"
+          className="p-1.5 rounded-lg text-gray-500 hover:text-gray-700 hover:bg-gray-200 dark:text-surface-400 dark:hover:text-surface-200 dark:hover:bg-surface-700 transition-colors"
           title="Copy code"
         >
-          {copied ? 'Copied!' : 'Copy'}
+          {copied ? (
+            <svg className="h-4 w-4 text-green-500 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+          ) : (
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+            </svg>
+          )}
         </button>
       </div>
       <SyntaxHighlighter
-        style={githubGist}
+        style={isDark ? atomOneDark : atomOneLight}
         language={language}
         PreTag="div"
         customStyle={{
-          margin: '1em 0',
+          margin: 0, // Removed margin to fit border container better
           padding: '1em',
-          borderRadius: '0.375rem',
-          backgroundColor: '#f9fafb',
+          borderRadius: '0.5rem',
+          backgroundColor: isDark ? '#0f172a' : '#f3f4f6', // darker gray for light mode
           ...customStyle,
         }}
         wrapLines={wrapLines}
@@ -643,9 +654,18 @@ function CopyButton({
   return (
     <button
       onClick={onClick}
-      className="px-2 py-0.5 text-xs border rounded hover:bg-gray-100"
+      className="p-1 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:text-surface-500 dark:hover:text-surface-300 dark:hover:bg-surface-800 transition-colors"
+      title="Copy ID"
     >
-      {copied ? 'Copied!' : 'Copy'}
+      {copied ? (
+        <svg className="h-3.5 w-3.5 text-green-500 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+        </svg>
+      ) : (
+        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+        </svg>
+      )}
     </button>
   );
 }
@@ -655,11 +675,11 @@ function ToolUseDisplay({ tool }: { tool: ToolUse }) {
   const isWriteTool = tool.name === 'Write';
 
   return (
-    <div className="border border-gray-200 rounded-lg overflow-hidden">
-      <div className="bg-gray-50 px-4 py-2 border-b border-gray-200">
-        <span className="text-green-600 font-semibold">{tool.name}</span>
+    <div className="border border-gray-200 dark:border-surface-700 rounded-lg overflow-hidden">
+      <div className="bg-gray-100 dark:bg-surface-800 px-4 py-2 border-b border-gray-200 dark:border-surface-700">
+        <span className="text-accent-600 dark:text-accent-400 font-semibold font-mono">{tool.name}</span>
       </div>
-      <div className="p-4">
+      <div className="p-4 bg-gray-50 dark:bg-surface-900/50">
         {isEditTool ? (
           <EditToolDisplay input={tool.input} />
         ) : isWriteTool ? (
@@ -671,8 +691,8 @@ function ToolUseDisplay({ tool }: { tool: ToolUse }) {
             customStyle={{
               margin: 0,
               padding: '1rem',
-              backgroundColor: '#f9fafb',
-              borderRadius: '0.375rem',
+              backgroundColor: 'transparent',
+              borderRadius: '0.5rem',
               fontSize: '0.875rem',
             }}
           />
@@ -690,42 +710,42 @@ function EditToolDisplay({ input }: { input: Record<string, unknown> }) {
   return (
     <div className="space-y-3">
       {filePath && (
-        <div className="font-mono text-sm text-gray-600">
-          <span className="font-semibold">File:</span> {filePath}
+        <div className="font-mono text-sm text-gray-500 dark:text-surface-400">
+          <span className="font-semibold text-gray-700 dark:text-surface-300">File:</span> {filePath}
         </div>
       )}
       <div className="grid gap-4 md:grid-cols-2">
         <div>
-          <div className="text-sm font-semibold text-red-600 mb-1">Old String (Removed)</div>
-          <div className="bg-red-50 border border-red-200 rounded-md overflow-hidden relative group">
+          <div className="text-sm font-semibold text-error-600 dark:text-error-400 mb-1">Old String (Removed)</div>
+          <div className="bg-error-500/10 border border-error-500/30 rounded-lg overflow-hidden relative group">
             <CodeBlockWithCopy
               language={getLanguageFromPath(filePath)}
               content={oldString || '(empty)'}
               customStyle={{
                 margin: 0,
                 padding: '1rem',
-                backgroundColor: 'rgb(254 242 242)',
+                backgroundColor: 'rgba(239, 68, 68, 0.1)',
                 fontSize: '0.75rem',
               }}
               wrapLines={true}
-              lineProps={{ style: { backgroundColor: 'rgb(254 226 226)' } }}
+              lineProps={{ style: { backgroundColor: 'rgba(239, 68, 68, 0.15)' } }}
             />
           </div>
         </div>
         <div>
-          <div className="text-sm font-semibold text-green-600 mb-1">New String (Added)</div>
-          <div className="bg-green-50 border border-green-200 rounded-md overflow-hidden relative group">
+          <div className="text-sm font-semibold text-success-600 dark:text-success-400 mb-1">New String (Added)</div>
+          <div className="bg-success-500/10 border border-success-500/30 rounded-lg overflow-hidden relative group">
              <CodeBlockWithCopy
               language={getLanguageFromPath(filePath)}
               content={newString || '(empty)'}
               customStyle={{
                 margin: 0,
                 padding: '1rem',
-                backgroundColor: 'rgb(240 253 244)',
+                backgroundColor: 'rgba(34, 197, 94, 0.1)',
                 fontSize: '0.75rem',
               }}
               wrapLines={true}
-              lineProps={{ style: { backgroundColor: 'rgb(220 252 231)' } }}
+              lineProps={{ style: { backgroundColor: 'rgba(34, 197, 94, 0.15)' } }}
             />
           </div>
         </div>
@@ -741,20 +761,20 @@ function WriteToolDisplay({ input }: { input: Record<string, unknown> }) {
   return (
     <div className="space-y-3">
       {filePath && (
-        <div className="font-mono text-sm text-gray-600">
-          <span className="font-semibold">File:</span> {filePath}
+        <div className="font-mono text-sm text-gray-500 dark:text-surface-400">
+          <span className="font-semibold text-gray-700 dark:text-surface-300">File:</span> {filePath}
         </div>
       )}
       <div>
-        <div className="text-sm font-semibold text-green-600 mb-1">Content (New File)</div>
-        <div className="bg-green-50 border border-green-200 rounded-md overflow-hidden max-h-96 overflow-y-auto">
+        <div className="text-sm font-semibold text-success-600 dark:text-success-400 mb-1">Content (New File)</div>
+        <div className="bg-success-500/10 border border-success-500/30 rounded-lg overflow-hidden max-h-96 overflow-y-auto">
           <CodeBlockWithCopy
             language={getLanguageFromPath(filePath)}
             content={content || '(empty)'}
             customStyle={{
               margin: 0,
               padding: '1rem',
-              backgroundColor: 'rgb(240 253 244)',
+              backgroundColor: 'rgba(34, 197, 94, 0.1)',
               fontSize: '0.75rem',
             }}
             showLineNumbers={true}
@@ -832,17 +852,17 @@ function ToolResultDisplay({
   }
 
   return (
-    <div className={`border rounded-lg overflow-hidden ${result.is_error ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}>
-      <div className={`px-4 py-2 border-b ${result.is_error ? 'bg-red-100 border-red-300' : 'bg-gray-50 border-gray-200'}`}>
-        <span className={`font-semibold ${result.is_error ? 'text-red-600' : 'text-gray-700'}`}>
+    <div className={`border rounded-lg overflow-hidden ${result.is_error ? 'border-error-500/30 bg-error-500/5' : 'border-gray-200 dark:border-surface-700'}`}>
+      <div className={`px-4 py-2 border-b ${result.is_error ? 'bg-error-500/10 border-error-500/30' : 'bg-gray-100 dark:bg-surface-800 border-gray-200 dark:border-surface-700'}`}>
+        <span className={`font-semibold font-mono ${result.is_error ? 'text-error-600 dark:text-error-400' : 'text-gray-900 dark:text-surface-200'}`}>
           {result.is_error ? 'Error Result' : 'Tool Result'}
         </span>
-        <span className="text-xs text-gray-500 ml-2">({result.tool_use_id})</span>
-        {toolName && <span className="text-xs text-gray-500 ml-2">• {toolName}</span>}
+        <span className="text-xs text-gray-500 dark:text-surface-400 ml-2 font-mono">({result.tool_use_id})</span>
+        {toolName && <span className="text-xs text-gray-500 dark:text-surface-400 ml-2 font-mono">• {toolName}</span>}
       </div>
-      <div className="p-4 overflow-x-auto">
+      <div className="p-4 overflow-x-auto bg-gray-50 dark:bg-surface-900/50">
         {result.is_error ? (
-          <pre className="text-sm whitespace-pre-wrap text-red-700">{typeof content === 'string' ? content : safeStringify(content)}</pre>
+          <pre className="text-sm whitespace-pre-wrap text-error-600 dark:text-error-400 font-mono">{typeof content === 'string' ? content : safeStringify(content)}</pre>
         ) : (
           <CodeBlockWithCopy
             language={language}

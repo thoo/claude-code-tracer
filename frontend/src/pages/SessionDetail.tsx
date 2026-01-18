@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
+import clsx from 'clsx';
 import {
   useSession,
   useSessionMetrics,
@@ -54,29 +55,29 @@ export default function SessionDetail() {
   return (
     <div className="space-y-6">
       {/* Breadcrumb */}
-      <nav className="flex items-center gap-2 text-sm text-gray-500">
-        <Link to="/" className="hover:text-gray-700">Projects</Link>
-        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <nav className="flex items-center gap-2 text-base text-gray-500 dark:text-surface-400">
+        <Link to="/" className="hover:text-gray-700 dark:hover:text-surface-300 transition-colors">Projects</Link>
+        <svg className="h-4 w-4 text-gray-400 dark:text-surface-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
         </svg>
-        <Link to={`/project/${projectHash}`} className="hover:text-gray-700 truncate max-w-[120px]">
+        <Link to={`/project/${projectHash}`} className="hover:text-gray-700 dark:hover:text-surface-300 transition-colors truncate max-w-[120px] font-mono">
           {projectHash}
         </Link>
-        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="h-4 w-4 text-gray-400 dark:text-surface-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
         </svg>
-        <span className="font-medium text-gray-900">{session.slug || sessionId}</span>
+        <span className="font-medium text-gray-700 dark:text-surface-200">{session.slug || sessionId}</span>
       </nav>
 
       {/* Session header */}
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-surface-100 tracking-tight">
             {session.slug || sessionId}
           </h1>
-          <p className="mt-1 text-sm text-gray-500">
+          <p className="mt-1 text-base text-gray-600 dark:text-surface-400 font-mono">
             Started {formatDateTime(session.start_time)}
-            {session.end_time && ` • Ended ${formatDateTime(session.end_time)}`}
+            {session.end_time && ` · Ended ${formatDateTime(session.end_time)}`}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -118,6 +119,7 @@ export default function SessionDetail() {
         <StatsCard
           title="Cost"
           value={formatCost(session.cost)}
+          variant="accent"
           subtitle={metrics ? `${metrics.cache_hit_rate.toFixed(0)}% cache hit` : undefined}
         />
       </div>
@@ -151,22 +153,19 @@ export default function SessionDetail() {
       </div>
 
       {/* Tabs */}
-      <div className="border-b border-gray-200">
-        <nav className="-mb-px flex gap-4 overflow-x-auto">
-          {(['messages', 'tools', 'skills'] as const).map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`whitespace-nowrap border-b-2 pb-3 text-sm font-medium capitalize transition-colors ${
-                activeTab === tab
-                  ? 'border-primary-500 text-primary-600'
-                  : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
-              }`}
-            >
-              {tab}
-            </button>
-          ))}
-        </nav>
+      <div className="tab-list">
+        {(['messages', 'tools', 'skills'] as const).map((tab) => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={clsx(
+              'tab capitalize',
+              activeTab === tab && 'tab-active'
+            )}
+          >
+            {tab}
+          </button>
+        ))}
       </div>
 
       {/* Tab content */}
@@ -219,7 +218,7 @@ function MessagesTab({ projectHash, sessionId, page, onPageChange }: TabProps & 
       <div className="flex flex-wrap items-center gap-4">
         {/* Type filter */}
         <div className="flex items-center gap-2">
-          <label htmlFor="type-filter" className="text-sm font-medium text-gray-700">
+          <label htmlFor="type-filter" className="text-base font-medium text-gray-600 dark:text-surface-400">
             Type:
           </label>
           <select
@@ -229,7 +228,7 @@ function MessagesTab({ projectHash, sessionId, page, onPageChange }: TabProps & 
               setTypeFilter(e.target.value);
               onPageChange(1);
             }}
-            className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+            className="select w-auto"
           >
             <option value="">All types</option>
             {filterOptions?.types.map((t) => (
@@ -243,7 +242,7 @@ function MessagesTab({ projectHash, sessionId, page, onPageChange }: TabProps & 
         {/* Tool filter */}
         {filterOptions && filterOptions.tools.length > 0 && (
           <div className="flex items-center gap-2">
-            <label htmlFor="tool-filter" className="text-sm font-medium text-gray-700">
+            <label htmlFor="tool-filter" className="text-base font-medium text-gray-600 dark:text-surface-400">
               Tool:
             </label>
             <select
@@ -253,7 +252,7 @@ function MessagesTab({ projectHash, sessionId, page, onPageChange }: TabProps & 
                 setToolFilter(e.target.value);
                 onPageChange(1);
               }}
-              className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+              className="select w-auto"
             >
               <option value="">All tools</option>
               {filterOptions.tools.map((t) => (
@@ -275,9 +274,9 @@ function MessagesTab({ projectHash, sessionId, page, onPageChange }: TabProps & 
                 setErrorOnly(e.target.checked);
                 onPageChange(1);
               }}
-              className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+              className="h-4 w-4 rounded border-gray-300 dark:border-surface-600 bg-white dark:bg-surface-800 text-accent-500 focus:ring-accent-500/20 focus:ring-offset-0"
             />
-            <span className="text-sm font-medium text-gray-700">
+            <span className="text-base font-medium text-gray-600 dark:text-surface-400">
               Errors only ({filterOptions.error_count})
             </span>
           </label>
@@ -285,7 +284,7 @@ function MessagesTab({ projectHash, sessionId, page, onPageChange }: TabProps & 
 
         {/* Search input */}
         <div className="flex items-center gap-2">
-          <label htmlFor="search-input" className="text-sm font-medium text-gray-700">
+          <label htmlFor="search-input" className="text-base font-medium text-gray-600 dark:text-surface-400">
             Search:
           </label>
           <input
@@ -297,7 +296,7 @@ function MessagesTab({ projectHash, sessionId, page, onPageChange }: TabProps & 
               onPageChange(1);
             }}
             placeholder="Search message content..."
-            className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 w-64"
+            className="input w-64"
           />
         </div>
 
@@ -311,7 +310,7 @@ function MessagesTab({ projectHash, sessionId, page, onPageChange }: TabProps & 
               setSearchQuery('');
               onPageChange(1);
             }}
-            className="text-sm text-gray-500 hover:text-gray-700 underline"
+            className="text-base text-gray-500 dark:text-surface-400 hover:text-accent-600 dark:hover:text-accent-400 transition-colors"
           >
             Clear filters
           </button>
@@ -321,13 +320,13 @@ function MessagesTab({ projectHash, sessionId, page, onPageChange }: TabProps & 
       {isLoading ? (
         <LoadingSpinner />
       ) : messages.length === 0 ? (
-        <div className="card text-center text-gray-500 py-8">
+        <div className="card text-center text-gray-500 dark:text-surface-400 py-8">
           No messages found{(typeFilter || toolFilter || errorOnly || searchQuery) ? ' matching filters' : ''}
         </div>
       ) : (
         <>
           <div className="card overflow-hidden !p-0">
-            <div className="divide-y divide-gray-100">
+            <div className="divide-y divide-gray-200 dark:divide-surface-800">
               {messages.map((msg) => {
                 // Parse subagent content if it's a subagent message
                 const isSubagent = msg.type === 'subagent';
@@ -343,7 +342,11 @@ function MessagesTab({ projectHash, sessionId, page, onPageChange }: TabProps & 
                 return (
                   <div
                     key={msg.uuid}
-                    className={`px-6 py-4 cursor-pointer transition-colors hover:bg-gray-50 ${msg.is_error ? 'bg-red-50 hover:bg-red-100' : ''} ${isSubagent ? 'bg-purple-50/50 hover:bg-purple-100/50' : ''}`}
+                    className={clsx(
+                      'message-item',
+                      msg.is_error && 'message-item-error',
+                      isSubagent && 'message-item-subagent'
+                    )}
                     onClick={() => {
                       if (isSubagent && subagentData?.agentId) {
                         navigate(`/subagent/${projectHash}/${sessionId}/${subagentData.agentId}`);
@@ -354,7 +357,7 @@ function MessagesTab({ projectHash, sessionId, page, onPageChange }: TabProps & 
                   >
                     <div className="flex items-start gap-4">
                       <div className="flex flex-col gap-1">
-                        <Badge variant={msg.type === 'assistant' ? 'primary' : msg.type === 'subagent' ? 'secondary' : msg.type === 'tool_result' ? 'warning' : msg.type === 'hook' ? 'gray' : 'gray'}>
+                        <Badge variant={msg.type === 'assistant' ? 'primary' : msg.type === 'subagent' ? 'secondary' : msg.type === 'tool_result' ? 'purple' : msg.type === 'user' ? 'teal' : 'gray'}>
                           {msg.type}
                         </Badge>
                         {msg.is_error && <Badge variant="error">error</Badge>}
@@ -365,28 +368,28 @@ function MessagesTab({ projectHash, sessionId, page, onPageChange }: TabProps & 
                             <div className="flex items-center gap-2 mb-1">
                               <Badge variant="primary">{subagentData.subagent_type || 'unknown'}</Badge>
                               {subagentData.description && (
-                                <span className="text-sm font-medium text-gray-900">{subagentData.description}</span>
+                                <span className="text-base font-medium text-gray-700 dark:text-surface-200">{subagentData.description}</span>
                               )}
                             </div>
                             {subagentData.prompt && (
-                              <p className="text-sm text-gray-600">
+                              <p className="text-base text-gray-600 dark:text-surface-300">
                                 {truncateText(subagentData.prompt, 200)}
                               </p>
                             )}
                           </>
                         ) : (
-                          <p className="text-sm text-gray-900">
+                          <p className="text-base text-gray-800 dark:text-surface-100">
                             {truncateText(msg.content || '[No content]', 300)}
                           </p>
                         )}
-                        <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-gray-500">
+                        <div className="mt-2 flex flex-wrap items-center gap-4 text-sm text-gray-500 dark:text-surface-400 font-mono">
                           <span>{formatDateTime(msg.timestamp)}</span>
                           {msg.model && <span>{msg.model}</span>}
                           {getTotalTokens(msg.tokens) > 0 && (
                             <span>{formatTokens(getTotalTokens(msg.tokens))} tokens</span>
                           )}
                           {msg.tool_names && !isSubagent && (
-                            <span className="text-primary-600">{msg.tool_names}</span>
+                            <span className="text-accent-600 dark:text-accent-400">{msg.tool_names}</span>
                           )}
                         </div>
                       </div>
@@ -431,29 +434,29 @@ function ToolsTab({ projectHash, sessionId }: TabProps) {
     <div className="space-y-6">
       {tools.length > 0 ? (
         <>
-          <div className="card">
-            <h3 className="mb-4 text-lg font-semibold text-gray-900">Tool Usage Distribution</h3>
+          <div className="chart-container">
+            <h3 className="mb-4 text-xl font-semibold text-gray-900 dark:text-surface-100">Tool Usage Distribution</h3>
             <ToolUsageChart tools={tools} />
           </div>
-          <div className="card overflow-hidden !p-0">
+          <div className="table-container">
             <table className="w-full">
-              <thead>
-                <tr className="border-b border-gray-100 bg-gray-50/50">
-                  <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Tool</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Calls</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Avg Duration</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Errors</th>
+              <thead className="table-header">
+                <tr>
+                  <th>Tool</th>
+                  <th>Calls</th>
+                  <th>Avg Duration</th>
+                  <th>Errors</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
+              <tbody>
                 {tools.map((tool) => (
-                  <tr key={tool.name}>
-                    <td className="px-6 py-4 font-medium text-gray-900">{tool.name}</td>
-                    <td className="px-6 py-4 text-gray-700">{tool.count}</td>
-                    <td className="px-6 py-4 text-gray-700">
+                  <tr key={tool.name} className="table-row">
+                    <td className="font-mono text-gray-700 dark:text-surface-200">{tool.name}</td>
+                    <td className="font-mono">{tool.count}</td>
+                    <td className="font-mono">
                       {tool.avg_duration_seconds > 0 ? `${tool.avg_duration_seconds.toFixed(2)}s` : '-'}
                     </td>
-                    <td className="px-6 py-4">
+                    <td>
                       {tool.error_count > 0 ? (
                         <Badge variant="error">{tool.error_count}</Badge>
                       ) : (
@@ -467,7 +470,7 @@ function ToolsTab({ projectHash, sessionId }: TabProps) {
           </div>
         </>
       ) : (
-        <div className="card text-center text-gray-500 py-8">No tool usage data available</div>
+        <div className="card text-center text-gray-500 dark:text-surface-400 py-8">No tool usage data available</div>
       )}
     </div>
   );
@@ -482,18 +485,18 @@ function SkillsTab({ projectHash, sessionId }: TabProps) {
     <div className="space-y-6">
       {skills && skills.skills.length > 0 ? (
         <div className="card">
-          <h3 className="mb-4 font-semibold text-gray-900">Skills Used</h3>
+          <h3 className="mb-4 text-xl font-semibold text-gray-900 dark:text-surface-100">Skills Used</h3>
           <div className="flex flex-wrap gap-2">
             {skills.skills.map((skill) => (
-              <div key={skill.skill_name} className="flex items-center gap-2 rounded-lg bg-gray-50 px-3 py-2">
+              <div key={skill.skill_name} className="flex items-center gap-2 rounded-lg bg-gray-100 dark:bg-surface-800 px-3 py-2 border border-gray-200 dark:border-surface-700">
                 <Badge variant="primary">{skill.skill_name}</Badge>
-                <span className="text-sm text-gray-500">{skill.invocation_count}x</span>
+                <span className="text-base text-gray-600 dark:text-surface-400 font-mono">{skill.invocation_count}x</span>
               </div>
             ))}
           </div>
         </div>
       ) : (
-        <div className="card text-center text-gray-500 py-8">No skills used in this session</div>
+        <div className="card text-center text-gray-500 dark:text-surface-400 py-8">No skills used in this session</div>
       )}
     </div>
   );

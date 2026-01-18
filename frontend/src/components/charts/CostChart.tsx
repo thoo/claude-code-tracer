@@ -44,11 +44,11 @@ export default function CostChart({ data }: CostChartProps) {
           content={({ active, payload, label }) => {
             if (active && payload && payload.length) {
               return (
-                <div className="rounded-lg border border-gray-200 bg-white p-3 shadow-lg">
-                  <p className="mb-2 font-medium text-gray-900">
+                <div className="rounded-lg border border-gray-200 dark:border-surface-700 bg-white dark:bg-surface-800 p-3 shadow-lg">
+                  <p className="mb-2 font-medium text-gray-900 dark:text-surface-100">
                     {format(parseISO(label), 'MMM d, yyyy')}
                   </p>
-                  <p className="text-sm text-primary-600">
+                  <p className="text-sm text-primary-600 dark:text-primary-400">
                     Cost: {formatCost(payload[0].value as number)}
                   </p>
                 </div>

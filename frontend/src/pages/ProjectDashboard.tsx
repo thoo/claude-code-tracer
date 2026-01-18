@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import clsx from 'clsx';
 import { useProjectSessions, useProjectMetrics, useProjectTools } from '../hooks/useApi';
 import {
   formatCost,
@@ -78,6 +79,7 @@ export default function ProjectDashboard() {
         <StatsCard
           title="Sessions"
           value={projectStats.totalSessions}
+          variant="accent"
           subtitle={`${projectStats.avgMessagesPerSession.toFixed(1)} avg messages/session`}
         />
         <StatsCard
@@ -93,6 +95,7 @@ export default function ProjectDashboard() {
         <StatsCard
           title="Total Cost"
           value={formatCost(projectStats.totalCost)}
+          variant="highlight"
           subtitle={`${formatCost(projectStats.avgCostPerSession)} avg/session`}
         />
         <StatsCard
@@ -103,22 +106,19 @@ export default function ProjectDashboard() {
       </div>
 
       {/* Tabs */}
-      <div className="border-b border-gray-200">
-        <nav className="-mb-px flex gap-4">
-          {(['sessions', 'metrics'] as const).map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`border-b-2 pb-3 text-sm font-medium capitalize transition-colors ${
-                activeTab === tab
-                  ? 'border-primary-500 text-primary-600'
-                  : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
-              }`}
-            >
-              {tab}
-            </button>
-          ))}
-        </nav>
+      <div className="tab-list">
+        {(['sessions', 'metrics'] as const).map((tab) => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={clsx(
+              'tab capitalize',
+              activeTab === tab && 'tab-active'
+            )}
+          >
+            {tab}
+          </button>
+        ))}
       </div>
 
       {/* Tab content */}
@@ -139,14 +139,14 @@ interface BreadcrumbProps {
 
 function Breadcrumb({ projectHash }: BreadcrumbProps) {
   return (
-    <nav className="flex items-center gap-2 text-sm text-gray-500">
-      <Link to="/" className="hover:text-gray-700">
+    <nav className="flex items-center gap-2 text-base text-gray-500 dark:text-surface-400">
+      <Link to="/" className="hover:text-gray-700 dark:hover:text-surface-300 transition-colors">
         Projects
       </Link>
-      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <svg className="h-4 w-4 text-gray-400 dark:text-surface-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
       </svg>
-      <span className="font-medium text-gray-900 truncate max-w-xs">{projectHash}</span>
+      <span className="font-medium text-gray-700 dark:text-surface-200 truncate max-w-xs font-mono">{projectHash}</span>
     </nav>
   );
 }
@@ -158,43 +158,25 @@ interface SessionsListProps {
 
 function SessionsList({ sessions, projectHash }: SessionsListProps) {
   return (
-    <div className="card overflow-hidden !p-0">
+    <div className="table-container">
       <div className="overflow-x-auto">
         <table className="w-full">
-          <thead>
-            <tr className="border-b border-gray-100 bg-gray-50/50">
-              <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                Session
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                Status
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                Duration
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                Messages
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                Tool Calls
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                Tokens
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                Cache Hit
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                Cost
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                Errors
-              </th>
+          <thead className="table-header">
+            <tr>
+              <th>Session</th>
+              <th>Status</th>
+              <th>Duration</th>
+              <th>Messages</th>
+              <th>Tool Calls</th>
+              <th>Tokens</th>
+              <th>Cache Hit</th>
+              <th>Cost</th>
+              <th>Errors</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100">
-            {sessions.map((session) => (
-              <SessionRow key={session.session_id} session={session} projectHash={projectHash} />
+          <tbody>
+            {sessions.map((session, index) => (
+              <SessionRow key={session.session_id} session={session} projectHash={projectHash} index={index} />
             ))}
           </tbody>
         </table>
@@ -206,9 +188,10 @@ function SessionsList({ sessions, projectHash }: SessionsListProps) {
 interface SessionRowProps {
   session: SessionSummary;
   projectHash: string;
+  index: number;
 }
 
-function SessionRow({ session, projectHash }: SessionRowProps) {
+function SessionRow({ session, projectHash, index }: SessionRowProps) {
   // Calculate cache hit rate
   const totalCacheTokens = session.tokens.cache_creation_input_tokens + session.tokens.cache_read_input_tokens;
   const totalInputTokens = session.tokens.input_tokens + totalCacheTokens;
@@ -217,32 +200,35 @@ function SessionRow({ session, projectHash }: SessionRowProps) {
     : 0;
 
   return (
-    <tr className="transition-colors hover:bg-gray-50/50">
-      <td className="px-6 py-4">
+    <tr
+      className="table-row animate-fade-in"
+      style={{ animationDelay: `${index * 0.03}s` }}
+    >
+      <td>
         <Link to={`/session/${projectHash}/${session.session_id}`} className="block group">
-          <div className="font-medium text-gray-900 group-hover:text-primary-600">
+          <div className="font-medium text-gray-900 dark:text-surface-100 group-hover:text-accent-600 dark:group-hover:text-accent-400 transition-colors">
             {session.slug || session.session_id}
           </div>
-          <div className="text-sm text-gray-500" title={formatDateTime(session.start_time)}>
+          <div className="text-sm text-gray-500 dark:text-surface-400 font-mono" title={formatDateTime(session.start_time)}>
             {formatRelativeTime(session.start_time)}
           </div>
         </Link>
       </td>
-      <td className="px-6 py-4">
+      <td>
         <SessionStatusBadge status={session.status} />
       </td>
-      <td className="px-6 py-4 text-sm text-gray-700">{formatDuration(session.duration_seconds)}</td>
-      <td className="px-6 py-4 text-sm text-gray-700">{session.message_count}</td>
-      <td className="px-6 py-4 text-sm text-gray-700">{session.tool_calls}</td>
-      <td className="px-6 py-4 text-sm text-gray-700">
-        <div>{formatTokens(getTotalTokens(session.tokens))}</div>
-        <div className="text-xs text-gray-400">
-          {formatTokens(session.tokens.cache_creation_input_tokens)} create · {formatTokens(session.tokens.cache_read_input_tokens)} read
+      <td className="font-mono">{formatDuration(session.duration_seconds)}</td>
+      <td className="font-mono">{session.message_count}</td>
+      <td className="font-mono">{session.tool_calls}</td>
+      <td>
+        <div className="font-mono">{formatTokens(getTotalTokens(session.tokens))}</div>
+        <div className="text-sm text-gray-500 dark:text-surface-400 font-mono">
+          {formatTokens(session.tokens.cache_read_input_tokens)} cached
         </div>
       </td>
-      <td className="px-6 py-4 text-sm text-gray-700">{cacheHitRate.toFixed(1)}%</td>
-      <td className="px-6 py-4 text-sm text-gray-700">{formatCost(session.cost)}</td>
-      <td className="px-6 py-4">
+      <td className="font-mono">{cacheHitRate.toFixed(1)}%</td>
+      <td className="font-mono text-gray-700 dark:text-surface-200">{formatCost(session.cost)}</td>
+      <td>
         {session.errors > 0 ? (
           <Badge variant="error">{session.errors}</Badge>
         ) : (
@@ -283,6 +269,7 @@ function ProjectMetricsView({ projectHash }: ProjectMetricsViewProps) {
           <StatsCard
             title="Total Cost"
             value={formatCost(metrics.cost.total_cost)}
+            variant="accent"
             breakdown={[
               { label: 'Input', value: formatCost(metrics.cost.input_cost) },
               { label: 'Output', value: formatCost(metrics.cost.output_cost) },
@@ -300,8 +287,8 @@ function ProjectMetricsView({ projectHash }: ProjectMetricsViewProps) {
 
       {/* Tool usage chart */}
       {toolsData && toolsData.tools.length > 0 && (
-        <div className="card">
-          <h3 className="mb-4 text-lg font-semibold text-gray-900">Tool Usage</h3>
+        <div className="chart-container">
+          <h3 className="mb-4 text-xl font-semibold text-gray-900 dark:text-surface-100">Tool Usage</h3>
           <ToolUsageChart tools={toolsData.tools} />
         </div>
       )}
@@ -310,37 +297,22 @@ function ProjectMetricsView({ projectHash }: ProjectMetricsViewProps) {
 }
 
 function SessionStatusBadge({ status }: { status: SessionStatus }) {
-  const config: Record<SessionStatus, { label: string; className: string }> = {
-    running: {
-      label: 'Running',
-      className: 'bg-green-100 text-green-800 border-green-200',
-    },
-    idle: {
-      label: 'Idle',
-      className: 'bg-yellow-100 text-yellow-800 border-yellow-200',
-    },
-    completed: {
-      label: 'Completed',
-      className: 'bg-gray-100 text-gray-600 border-gray-200',
-    },
-    interrupted: {
-      label: 'Interrupted',
-      className: 'bg-orange-100 text-orange-800 border-orange-200',
-    },
-    unknown: {
-      label: 'Unknown',
-      className: 'bg-gray-100 text-gray-500 border-gray-200',
-    },
+  const config: Record<SessionStatus, { label: string; variant: 'success' | 'warning' | 'gray' | 'error' | 'primary' }> = {
+    running: { label: 'Running', variant: 'success' },
+    idle: { label: 'Idle', variant: 'warning' },
+    completed: { label: 'Completed', variant: 'gray' },
+    interrupted: { label: 'Interrupted', variant: 'error' },
+    unknown: { label: 'Unknown', variant: 'gray' },
   };
 
-  const { label, className } = config[status] || config.unknown;
+  const { label, variant } = config[status] || config.unknown;
 
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 text-xs font-medium rounded-full border ${className}`}>
+    <span className={clsx('badge', `badge-${variant}`)}>
       {status === 'running' && (
-        <span className="relative flex h-2 w-2">
-          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-          <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+        <span className="relative flex h-2 w-2 mr-1">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success-400 opacity-75" />
+          <span className="relative inline-flex rounded-full h-2 w-2 bg-success-500" />
         </span>
       )}
       {label}

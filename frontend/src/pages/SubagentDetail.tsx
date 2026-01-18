@@ -267,7 +267,7 @@ function MessagesTab({
                 >
                   <div className="flex items-start gap-4">
                     <div className="flex flex-col gap-1">
-                      <Badge variant={msg.type === 'assistant' ? 'primary' : msg.type === 'tool_result' ? 'warning' : 'gray'}>
+                      <Badge variant={msg.type === 'assistant' ? 'primary' : msg.type === 'tool_result' ? 'purple' : msg.type === 'user' ? 'teal' : 'gray'}>
                         {msg.type}
                       </Badge>
                       {msg.is_error && <Badge variant="error">error</Badge>}
@@ -276,14 +276,14 @@ function MessagesTab({
                       <p className="text-sm text-gray-900">
                         {truncateText(msg.content || '[No content]', 300)}
                       </p>
-                      <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-gray-500">
+                      <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-gray-500 dark:text-surface-400 font-mono">
                         <span>{formatDateTime(msg.timestamp)}</span>
                         {msg.model && <span>{msg.model}</span>}
                         {getTotalTokens(msg.tokens) > 0 && (
                           <span>{formatTokens(getTotalTokens(msg.tokens))} tokens</span>
                         )}
                         {msg.tool_names && (
-                          <span className="text-primary-600">{msg.tool_names}</span>
+                          <span className="text-accent-600 dark:text-accent-400">{msg.tool_names}</span>
                         )}
                       </div>
                     </div>

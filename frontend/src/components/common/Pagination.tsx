@@ -17,10 +17,8 @@ export default function Pagination({ currentPage, totalPages, onPageChange }: Pa
         onClick={() => onPageChange(currentPage - 1)}
         disabled={currentPage === 1}
         className={clsx(
-          'flex h-9 w-9 items-center justify-center rounded-lg text-sm font-medium transition-colors',
-          currentPage === 1
-            ? 'cursor-not-allowed text-gray-300'
-            : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
+          'pagination-btn',
+          currentPage === 1 && 'cursor-not-allowed opacity-30'
         )}
       >
         <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -31,15 +29,13 @@ export default function Pagination({ currentPage, totalPages, onPageChange }: Pa
       {pages.map((page, index) => (
         <span key={index}>
           {page === '...' ? (
-            <span className="flex h-9 w-9 items-center justify-center text-gray-500">...</span>
+            <span className="pagination-btn cursor-default">...</span>
           ) : (
             <button
               onClick={() => onPageChange(page as number)}
               className={clsx(
-                'flex h-9 min-w-[2.25rem] items-center justify-center rounded-lg px-3 text-sm font-medium transition-colors',
-                currentPage === page
-                  ? 'bg-primary-500 text-white'
-                  : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
+                'pagination-btn font-mono',
+                currentPage === page && 'pagination-btn-active'
               )}
             >
               {page}
@@ -52,10 +48,8 @@ export default function Pagination({ currentPage, totalPages, onPageChange }: Pa
         onClick={() => onPageChange(currentPage + 1)}
         disabled={currentPage === totalPages}
         className={clsx(
-          'flex h-9 w-9 items-center justify-center rounded-lg text-sm font-medium transition-colors',
-          currentPage === totalPages
-            ? 'cursor-not-allowed text-gray-300'
-            : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
+          'pagination-btn',
+          currentPage === totalPages && 'cursor-not-allowed opacity-30'
         )}
       >
         <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
