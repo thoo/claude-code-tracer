@@ -146,6 +146,7 @@ interface MessageDetailModalProps {
   messageUuid: string;
   onClose: () => void;
   onNavigate?: (uuid: string) => void;
+  apiBasePath?: string;
 }
 
 export default function MessageDetailModal({
@@ -154,10 +155,13 @@ export default function MessageDetailModal({
   messageUuid,
   onClose,
   onNavigate,
+  apiBasePath,
 }: MessageDetailModalProps) {
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
-  const { data: message, isLoading } = useMessageDetail(projectHash, sessionId, messageUuid);
+  // Use custom API path if provided, otherwise use default session path
+  const effectiveApiPath = apiBasePath || `/api/sessions/${projectHash}/${sessionId}`;
+  const { data: message, isLoading } = useMessageDetail(projectHash, sessionId, messageUuid, effectiveApiPath);
 
   // Handle keyboard navigation
   useEffect(() => {
@@ -177,9 +181,10 @@ export default function MessageDetailModal({
 
   const navigateToIndex = useCallback(async (index: number) => {
     try {
-      const response = await fetch(
-        `/api/sessions/${projectHash}/${sessionId}/messages/by-index/${index}`
-      );
+      const fetchPath = apiBasePath
+        ? `${apiBasePath}/messages/by-index/${index}`
+        : `/api/sessions/${projectHash}/${sessionId}/messages/by-index/${index}`;
+      const response = await fetch(fetchPath);
       if (response.ok) {
         const data: MessageDetailResponse = await response.json();
         if (onNavigate) {
@@ -189,7 +194,7 @@ export default function MessageDetailModal({
     } catch (error) {
       console.error('Navigation failed:', error);
     }
-  }, [projectHash, sessionId, onNavigate]);
+  }, [projectHash, sessionId, onNavigate, apiBasePath]);
 
   const copyToClipboard = (text: string, field: string) => {
     navigator.clipboard.writeText(text);

@@ -526,6 +526,45 @@ WHERE type = 'user'
        OR CAST(message.content AS VARCHAR) LIKE '%"is_error":true%')
 """
 
+SUBAGENT_CALLS_WITH_AGENT_ID_QUERY = f"""
+WITH task_tool_calls AS (
+    SELECT
+        unnest(from_json(CAST(message.content AS VARCHAR), '[{{{{"type": "VARCHAR", "name": "VARCHAR", "id": "VARCHAR", "input": "JSON"}}}}]')) as tool_item,
+        timestamp
+    FROM read_json_auto('{{path}}', {_JSON_OPTS})
+    WHERE type = 'assistant'
+),
+task_details AS (
+    SELECT
+        tool_item.id as tool_use_id,
+        json_extract_string(tool_item.input, '$.subagent_type') as subagent_type,
+        json_extract_string(tool_item.input, '$.description') as description,
+        json_extract_string(tool_item.input, '$.prompt') as prompt,
+        timestamp
+    FROM task_tool_calls
+    WHERE tool_item.type = 'tool_use' AND tool_item.name = 'Task'
+),
+agent_progress AS (
+    SELECT DISTINCT ON (json_extract_string(data, '$.agentId'))
+        json_extract_string(data, '$.agentId') as agent_id,
+        parentToolUseID as parent_tool_use_id
+    FROM read_json_auto('{{path}}', {_JSON_OPTS})
+    WHERE type = 'progress'
+      AND json_extract_string(data, '$.type') = 'agent_progress'
+      AND json_extract_string(data, '$.agentId') IS NOT NULL
+)
+SELECT
+    COALESCE(p.agent_id, t.tool_use_id) as agent_id,
+    t.tool_use_id,
+    t.subagent_type,
+    t.description,
+    t.prompt,
+    t.timestamp
+FROM task_details t
+LEFT JOIN agent_progress p ON t.tool_use_id = p.parent_tool_use_id
+WHERE t.tool_use_id IS NOT NULL
+"""
+
 MESSAGE_DETAIL_QUERY = f"""
 WITH all_entries AS (
     SELECT

@@ -23,7 +23,13 @@ from ..models.responses import (
     ToolUsageResponse,
     ToolUsageStats,
 )
-from .database import get_connection, get_session_path, get_subagent_files_for_session, list_sessions
+from .database import (
+    get_connection,
+    get_session_path,
+    get_subagent_files_for_session,
+    get_subagent_path_for_session,
+    list_sessions,
+)
 from .metrics import calculate_cache_hit_rate, calculate_cost, count_lines_changed
 from .queries import (
     CODE_CHANGES_QUERY,
@@ -32,7 +38,7 @@ from .queries import (
     SESSION_STATUS_QUERY,
     SESSION_TIMERANGE_QUERY,
     SKILL_CALLS_QUERY,
-    SUBAGENT_CALLS_QUERY,
+    SUBAGENT_CALLS_WITH_AGENT_ID_QUERY,
     TOKEN_USAGE_BY_MODEL_QUERY,
     TOKEN_USAGE_QUERY,
     TOOL_USAGE_QUERY,
@@ -332,24 +338,79 @@ def get_session_metrics(project_hash: str, session_id: str) -> SessionMetricsRes
         )
 
 
+def _get_subagent_details(
+    conn: DuckDBPyConnection,
+    project_hash: str,
+    session_id: str,
+    agent_id: str,
+) -> tuple[str, datetime | None, TokenUsage, int]:
+    """Get details for a subagent from its log file.
+
+    Returns: (status, end_time, tokens, tool_calls)
+    """
+    subagent_path = get_subagent_path_for_session(project_hash, session_id, agent_id)
+    if not subagent_path or not subagent_path.exists():
+        return ("unknown", None, TokenUsage(), 0)
+
+    path_str = str(subagent_path)
+
+    # Get token usage
+    token_result = _execute_query(conn, TOKEN_USAGE_QUERY.format(path=path_str))
+    tokens = _parse_token_usage(token_result)
+
+    # Get tool call count
+    tool_result = _execute_query_all(conn, TOOL_USAGE_QUERY.format(path=path_str))
+    tool_calls = sum(row[1] for row in tool_result)
+
+    # Get time range to determine end_time and status
+    time_result = _execute_query(conn, SESSION_TIMERANGE_QUERY.format(path=path_str))
+    end_time = _parse_timestamp(time_result[1]) if time_result and time_result[1] else None
+
+    status = "completed" if end_time else "running"
+
+    return (status, end_time, tokens, tool_calls)
+
+
 def get_session_subagents(project_hash: str, session_id: str) -> SubagentListResponse:
-    """Get subagents spawned in a session."""
+    """Get subagents spawned in a session with full details."""
     session_path = get_session_path(project_hash, session_id)
     if not session_path.exists():
         return SubagentListResponse()
 
     with get_connection() as conn:
-        result = _execute_query_all(conn, SUBAGENT_CALLS_QUERY.format(path=str(session_path)))
-        subagents = [
-            SubagentResponse(
-                agent_id=row[0],
-                subagent_type=row[1] or "unknown",
-                description=row[2],
-                start_time=row[4] if len(row) > 4 else None,
+        # Get subagent calls with proper agent IDs from progress entries
+        result = _execute_query_all(
+            conn, SUBAGENT_CALLS_WITH_AGENT_ID_QUERY.format(path=str(session_path))
+        )
+
+        subagents = []
+        for row in result:
+            if not row[0]:
+                continue
+
+            agent_id = row[0]
+            subagent_type = row[2] or "unknown"
+            description = row[3]
+            start_time = _parse_timestamp(row[5]) if len(row) > 5 else None
+
+            # Get additional details from subagent log file
+            status, end_time, tokens, tool_calls = _get_subagent_details(
+                conn, project_hash, session_id, agent_id
             )
-            for row in result
-            if row[0]
-        ]
+
+            subagents.append(
+                SubagentResponse(
+                    agent_id=agent_id,
+                    subagent_type=subagent_type,
+                    description=description,
+                    status=status,
+                    start_time=start_time,
+                    end_time=end_time,
+                    tokens=tokens,
+                    tool_calls=tool_calls,
+                )
+            )
+
         return SubagentListResponse(subagents=subagents, total_count=len(subagents))
 
 

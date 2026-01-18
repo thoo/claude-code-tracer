@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
   useSession,
   useSessionMetrics,
@@ -7,9 +7,6 @@ import {
   useSessionMessageFilters,
   useSessionTools,
   useSessionSkills,
-  useSessionCodeChanges,
-  useSessionCommands,
-  useSubagentDetail,
 } from '../hooks/useApi';
 import {
   formatCost,
@@ -27,7 +24,7 @@ import Pagination from '../components/common/Pagination';
 import ToolUsageChart from '../components/charts/ToolUsageChart';
 import MessageDetailModal from '../components/MessageDetailModal';
 
-type TabType = 'messages' | 'tools' | 'commands' | 'code';
+type TabType = 'messages' | 'tools' | 'skills';
 
 export default function SessionDetail() {
   const { projectHash, sessionId } = useParams<{ projectHash: string; sessionId: string }>();
@@ -156,7 +153,7 @@ export default function SessionDetail() {
       {/* Tabs */}
       <div className="border-b border-gray-200">
         <nav className="-mb-px flex gap-4 overflow-x-auto">
-          {(['messages', 'tools', 'commands', 'code'] as const).map((tab) => (
+          {(['messages', 'tools', 'skills'] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -166,7 +163,7 @@ export default function SessionDetail() {
                   : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
               }`}
             >
-              {tab === 'code' ? 'Code Changes' : tab}
+              {tab}
             </button>
           ))}
         </nav>
@@ -184,11 +181,8 @@ export default function SessionDetail() {
       {activeTab === 'tools' && (
         <ToolsTab projectHash={projectHash || ''} sessionId={sessionId || ''} />
       )}
-      {activeTab === 'commands' && (
-        <CommandsTab projectHash={projectHash || ''} sessionId={sessionId || ''} />
-      )}
-      {activeTab === 'code' && (
-        <CodeChangesTab projectHash={projectHash || ''} sessionId={sessionId || ''} />
+      {activeTab === 'skills' && (
+        <SkillsTab projectHash={projectHash || ''} sessionId={sessionId || ''} />
       )}
     </div>
   );
@@ -199,20 +193,13 @@ interface TabProps {
   sessionId: string;
 }
 
-interface SubagentData {
-  agentId?: string;
-  subagent_type?: string;
-  description?: string;
-  prompt?: string;
-}
-
 function MessagesTab({ projectHash, sessionId, page, onPageChange }: TabProps & { page: number; onPageChange: (p: number) => void }) {
+  const navigate = useNavigate();
   const [typeFilter, setTypeFilter] = useState<string>('');
   const [toolFilter, setToolFilter] = useState<string>('');
   const [errorOnly, setErrorOnly] = useState(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedMessageUuid, setSelectedMessageUuid] = useState<string | null>(null);
-  const [selectedSubagent, setSelectedSubagent] = useState<{ data: SubagentData; timestamp: string } | null>(null);
 
   const { data: filterOptions } = useSessionMessageFilters(projectHash, sessionId);
   const { data, isLoading } = useSessionMessages(projectHash, sessionId, {
@@ -358,8 +345,8 @@ function MessagesTab({ projectHash, sessionId, page, onPageChange }: TabProps & 
                     key={msg.uuid}
                     className={`px-6 py-4 cursor-pointer transition-colors hover:bg-gray-50 ${msg.is_error ? 'bg-red-50 hover:bg-red-100' : ''} ${isSubagent ? 'bg-purple-50/50 hover:bg-purple-100/50' : ''}`}
                     onClick={() => {
-                      if (isSubagent && subagentData) {
-                        setSelectedSubagent({ data: subagentData, timestamp: msg.timestamp });
+                      if (isSubagent && subagentData?.agentId) {
+                        navigate(`/subagent/${projectHash}/${sessionId}/${subagentData.agentId}`);
                       } else {
                         setSelectedMessageUuid(msg.uuid);
                       }
@@ -429,128 +416,6 @@ function MessagesTab({ projectHash, sessionId, page, onPageChange }: TabProps & 
           onNavigate={(uuid) => setSelectedMessageUuid(uuid)}
         />
       )}
-
-      {/* Subagent Detail Modal */}
-      {selectedSubagent && (
-        <SubagentDetailModal
-          subagent={selectedSubagent.data}
-          timestamp={selectedSubagent.timestamp}
-          projectHash={projectHash}
-          onClose={() => setSelectedSubagent(null)}
-        />
-      )}
-    </div>
-  );
-}
-
-function SubagentDetailModal({
-  subagent,
-  timestamp,
-  projectHash,
-  onClose,
-}: {
-  subagent: SubagentData;
-  timestamp: string;
-  projectHash: string;
-  onClose: () => void;
-}) {
-  const { data: details, isLoading } = useSubagentDetail(projectHash, subagent.agentId || '');
-
-  const totalTokens = details ? (
-    details.tokens.input_tokens +
-    details.tokens.output_tokens +
-    details.tokens.cache_creation_input_tokens +
-    details.tokens.cache_read_input_tokens
-  ) : 0;
-
-  const duration = details?.start_time && details?.end_time
-    ? Math.round((new Date(details.end_time).getTime() - new Date(details.start_time).getTime()) / 1000)
-    : null;
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[80vh] flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
-          <h2 className="text-xl font-semibold text-gray-900">Subagent Details</h2>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 text-2xl leading-none"
-          >
-            &times;
-          </button>
-        </div>
-
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-4">
-          <div className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-3 text-sm">
-            <span className="text-gray-500 font-medium">Type:</span>
-            <span>
-              <Badge variant="primary">{subagent.subagent_type || 'unknown'}</Badge>
-            </span>
-
-            <span className="text-gray-500 font-medium">Agent ID:</span>
-            <span className="text-gray-900 font-mono text-xs">{subagent.agentId || 'N/A'}</span>
-
-            <span className="text-gray-500 font-medium">Started:</span>
-            <span className="text-gray-900">{formatDateTime(timestamp)}</span>
-
-            {subagent.description && (
-              <>
-                <span className="text-gray-500 font-medium">Description:</span>
-                <span className="text-gray-900">{subagent.description}</span>
-              </>
-            )}
-
-            {/* Additional details from API */}
-            {isLoading ? (
-              <>
-                <span className="text-gray-500 font-medium">Status:</span>
-                <span className="text-gray-400">Loading...</span>
-              </>
-            ) : details && (
-              <>
-                <span className="text-gray-500 font-medium">Status:</span>
-                <span>
-                  <Badge variant={details.status === 'completed' ? 'success' : details.status === 'running' ? 'primary' : 'gray'}>
-                    {details.status}
-                  </Badge>
-                </span>
-
-                {duration !== null && (
-                  <>
-                    <span className="text-gray-500 font-medium">Duration:</span>
-                    <span className="text-gray-900">{formatDuration(duration)}</span>
-                  </>
-                )}
-
-                <span className="text-gray-500 font-medium">Tool Calls:</span>
-                <span className="text-gray-900">{details.tool_calls}</span>
-
-                <span className="text-gray-500 font-medium">Tokens:</span>
-                <span className="text-gray-900">{formatTokens(totalTokens)}</span>
-              </>
-            )}
-          </div>
-
-          {subagent.prompt && (
-            <div className="mt-4">
-              <h3 className="text-sm font-medium text-gray-500 mb-2">Prompt</h3>
-              <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 max-h-64 overflow-y-auto">
-                <pre className="text-sm text-gray-800 whitespace-pre-wrap font-mono leading-relaxed">
-                  {subagent.prompt}
-                </pre>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
     </div>
   );
 }
@@ -608,95 +473,14 @@ function ToolsTab({ projectHash, sessionId }: TabProps) {
   );
 }
 
-function CommandsTab({ projectHash, sessionId }: TabProps) {
-  const { data, isLoading } = useSessionCommands(projectHash, sessionId);
-
-  if (isLoading) return <LoadingSpinner />;
-
-  const commands = data?.commands || [];
-  const summary = data?.summary;
-
-  return (
-    <div className="space-y-6">
-      {summary && (
-        <div className="grid gap-4 sm:grid-cols-3">
-          <StatsCard title="Total Commands" value={summary.total_commands} />
-          <StatsCard title="Interruption Rate" value={`${summary.interruption_rate.toFixed(1)}%`} />
-          <StatsCard title="Avg Steps/Command" value={summary.avg_steps_per_command.toFixed(1)} />
-        </div>
-      )}
-      <div className="card overflow-hidden !p-0">
-        <div className="divide-y divide-gray-100">
-          {commands.map((cmd, idx) => (
-            <div key={idx} className="px-6 py-4">
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm text-gray-900">{truncateText(cmd.user_message, 200)}</p>
-                  <p className="mt-1 text-xs text-gray-500">{formatDateTime(cmd.timestamp)}</p>
-                </div>
-                {cmd.followed_by_interruption && (
-                  <Badge variant="warning">Interrupted</Badge>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function CodeChangesTab({ projectHash, sessionId }: TabProps) {
-  const { data, isLoading } = useSessionCodeChanges(projectHash, sessionId);
-  const { data: skills } = useSessionSkills(projectHash, sessionId);
+function SkillsTab({ projectHash, sessionId }: TabProps) {
+  const { data: skills, isLoading } = useSessionSkills(projectHash, sessionId);
 
   if (isLoading) return <LoadingSpinner />;
 
   return (
     <div className="space-y-6">
-      {/* Code changes summary */}
-      {data && (
-        <>
-          <div className="grid gap-4 sm:grid-cols-4">
-            <StatsCard title="Files Created" value={data.files_created} />
-            <StatsCard title="Files Modified" value={data.files_modified} />
-            <StatsCard title="Lines Added" value={`+${data.lines_added}`} />
-            <StatsCard title="Lines Removed" value={`-${data.lines_removed}`} />
-          </div>
-          {data.changes_by_file.length > 0 && (
-            <div className="card overflow-hidden !p-0">
-              <div className="border-b border-gray-100 px-6 py-4">
-                <h3 className="font-semibold text-gray-900">Files Changed</h3>
-              </div>
-              <div className="divide-y divide-gray-100">
-                {data.changes_by_file.map((file, idx) => (
-                  <div key={idx} className="flex items-center justify-between px-6 py-3">
-                    <div className="flex items-center gap-3">
-                      <Badge variant={file.operation === 'Write' ? 'success' : 'primary'}>
-                        {file.operation}
-                      </Badge>
-                      <span className="text-sm font-mono text-gray-700 truncate max-w-md">
-                        {file.file_path}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2 text-sm">
-                      {file.lines_added > 0 && (
-                        <span className="text-green-600">+{file.lines_added}</span>
-                      )}
-                      {file.lines_removed > 0 && (
-                        <span className="text-red-600">-{file.lines_removed}</span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </>
-      )}
-
-      {/* Skills used */}
-      {skills && skills.skills.length > 0 && (
+      {skills && skills.skills.length > 0 ? (
         <div className="card">
           <h3 className="mb-4 font-semibold text-gray-900">Skills Used</h3>
           <div className="flex flex-wrap gap-2">
@@ -708,6 +492,8 @@ function CodeChangesTab({ projectHash, sessionId }: TabProps) {
             ))}
           </div>
         </div>
+      ) : (
+        <div className="card text-center text-gray-500 py-8">No skills used in this session</div>
       )}
     </div>
   );

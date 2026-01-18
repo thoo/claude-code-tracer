@@ -115,7 +115,15 @@ async def get_project_sessions(project_hash: str) -> SessionListResponse:
             sessions.append(summary)
 
     # Sort by start time, most recent first
-    sessions.sort(key=lambda s: s.start_time, reverse=True)
+    # Normalize timezone to avoid comparing offset-naive and offset-aware datetimes
+    def sort_key(s: SessionSummary) -> datetime:
+        if s.start_time is None:
+            return datetime.min.replace(tzinfo=UTC)
+        if s.start_time.tzinfo is None:
+            return s.start_time.replace(tzinfo=UTC)
+        return s.start_time
+
+    sessions.sort(key=sort_key, reverse=True)
 
     return SessionListResponse(sessions=sessions, total=len(sessions))
 

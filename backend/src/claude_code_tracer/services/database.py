@@ -62,6 +62,42 @@ def get_subagent_path(project_hash: str, agent_id: str) -> Path:
     return project_dir / agent_filename
 
 
+def get_subagent_path_for_session(
+    project_hash: str, session_id: str, agent_id: str
+) -> Path | None:
+    """Get path to a specific subagent JSONL file for a session.
+
+    Searches in:
+    1. {project_dir}/{session_id}/subagents/agent-{agent_id}.jsonl (new structure)
+    2. {project_dir}/agent-{agent_id}.jsonl (old structure, with sessionId match)
+
+    Returns None if the agent file doesn't exist.
+    """
+    project_dir = get_project_dir(project_hash)
+    agent_filename = f"agent-{agent_id}.jsonl"
+
+    # Check new structure first: {session_id}/subagents/
+    new_path = project_dir / session_id / "subagents" / agent_filename
+    if new_path.exists():
+        return new_path
+
+    # Check old structure: direct in project dir
+    old_path = project_dir / agent_filename
+    if old_path.exists():
+        # Verify it belongs to this session by checking sessionId in first line
+        try:
+            with open(old_path, "rb") as f:
+                first_line = f.readline()
+                if first_line:
+                    data = orjson.loads(first_line)
+                    if data.get("sessionId") == session_id:
+                        return old_path
+        except (orjson.JSONDecodeError, OSError):
+            pass
+
+    return None
+
+
 def get_subagent_files_for_session(project_hash: str, session_id: str) -> list[Path]:
     """Find all subagent files that belong to a session.
 
@@ -186,20 +222,41 @@ def _extract_index_entries(index_data: dict | list) -> list[dict]:
 
 
 def list_sessions(project_hash: str) -> list[dict[str, str]]:
-    """List all sessions for a project."""
+    """List all sessions for a project.
+
+    Merges sessions from both the index file and filesystem scan to ensure
+    all sessions are discovered, even if the index is out of date.
+    """
     project_dir = get_project_dir(project_hash)
     if not project_dir.exists():
         return []
 
-    sessions = _get_sessions_from_index(project_hash)
-    if sessions:
-        return sessions
+    # Get sessions from index (deduplicate by session_id)
+    seen_ids: set[str] = set()
+    sessions: list[dict[str, str]] = []
 
-    return [
-        {"session_id": f.stem, "slug": None, "directory": str(project_dir)}
-        for f in project_dir.glob("*.jsonl")
-        if not f.name.startswith("agent-") and is_valid_uuid(f.stem)
-    ]
+    for session in _get_sessions_from_index(project_hash):
+        session_id = session["session_id"]
+        if session_id and session_id not in seen_ids:
+            seen_ids.add(session_id)
+            sessions.append(session)
+
+    # Scan filesystem for any sessions not in index
+    for f in project_dir.glob("*.jsonl"):
+        if f.name.startswith("agent-"):
+            continue
+        if not is_valid_uuid(f.stem):
+            continue
+        if f.stem in seen_ids:
+            continue
+        seen_ids.add(f.stem)
+        sessions.append({
+            "session_id": f.stem,
+            "slug": None,
+            "directory": str(project_dir),
+        })
+
+    return sessions
 
 
 def _get_sessions_from_index(project_hash: str) -> list[dict[str, str]]:

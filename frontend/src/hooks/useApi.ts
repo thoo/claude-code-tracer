@@ -85,10 +85,19 @@ export function useSessionMessageFilters(projectHash: string, sessionId: string)
 }
 
 // Message detail
-export function useMessageDetail(projectHash: string, sessionId: string, messageUuid: string) {
+export function useMessageDetail(
+  projectHash: string,
+  sessionId: string,
+  messageUuid: string,
+  apiBasePath?: string
+) {
+  const path = apiBasePath
+    ? `${apiBasePath.replace('/api', '')}/messages/${messageUuid}`
+    : `/sessions/${projectHash}/${sessionId}/messages/${messageUuid}`;
+
   return useQuery({
-    queryKey: ['message-detail', projectHash, sessionId, messageUuid],
-    queryFn: () => fetchApi<MessageDetailResponse>(`/sessions/${projectHash}/${sessionId}/messages/${messageUuid}`),
+    queryKey: ['message-detail', projectHash, sessionId, messageUuid, apiBasePath],
+    queryFn: () => fetchApi<MessageDetailResponse>(path),
     enabled: !!projectHash && !!sessionId && !!messageUuid,
   });
 }
@@ -175,6 +184,84 @@ export function useSubagentDetail(projectHash: string, agentId: string) {
       tool_calls: number;
     }>(`/subagents/${projectHash}/${agentId}`),
     enabled: !!projectHash && !!agentId,
+  });
+}
+
+// Subagent info (with session context)
+export function useSubagentInfo(projectHash: string, sessionId: string, agentId: string) {
+  return useQuery({
+    queryKey: ['subagent-info', projectHash, sessionId, agentId],
+    queryFn: () => fetchApi<{
+      agent_id: string;
+      subagent_type: string;
+      description: string | null;
+      status: string;
+      start_time: string | null;
+      end_time: string | null;
+      tokens: {
+        input_tokens: number;
+        output_tokens: number;
+        cache_creation_input_tokens: number;
+        cache_read_input_tokens: number;
+      };
+      tool_calls: number;
+    }>(`/subagents/${projectHash}/${sessionId}/${agentId}`),
+    enabled: !!projectHash && !!sessionId && !!agentId,
+  });
+}
+
+// Subagent messages
+export function useSubagentMessages(
+  projectHash: string,
+  sessionId: string,
+  agentId: string,
+  options: {
+    page?: number;
+    perPage?: number;
+    type?: string;
+    errorOnly?: boolean;
+  } = {}
+) {
+  const { page = 1, perPage = 50, type, errorOnly } = options;
+
+  return useQuery({
+    queryKey: ['subagent-messages', projectHash, sessionId, agentId, page, perPage, type, errorOnly],
+    queryFn: () =>
+      fetchApi<MessageListResponse>(
+        `/subagents/${projectHash}/${sessionId}/${agentId}/messages${buildQueryString({
+          page,
+          per_page: perPage,
+          type,
+          error_only: errorOnly,
+        })}`
+      ),
+    enabled: !!projectHash && !!sessionId && !!agentId,
+  });
+}
+
+// Subagent message detail
+export function useSubagentMessageDetail(
+  projectHash: string,
+  sessionId: string,
+  agentId: string,
+  messageUuid: string
+) {
+  return useQuery({
+    queryKey: ['subagent-message-detail', projectHash, sessionId, agentId, messageUuid],
+    queryFn: () =>
+      fetchApi<MessageDetailResponse>(
+        `/subagents/${projectHash}/${sessionId}/${agentId}/messages/${messageUuid}`
+      ),
+    enabled: !!projectHash && !!sessionId && !!agentId && !!messageUuid,
+  });
+}
+
+// Subagent tools
+export function useSubagentTools(projectHash: string, sessionId: string, agentId: string) {
+  return useQuery({
+    queryKey: ['subagent-tools', projectHash, sessionId, agentId],
+    queryFn: () => fetchApi<ToolUsageResponse>(`/subagents/${projectHash}/${agentId}/tools`),
+    enabled: !!projectHash && !!sessionId && !!agentId,
   });
 }
 
