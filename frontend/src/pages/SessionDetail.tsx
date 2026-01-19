@@ -389,7 +389,19 @@ function MessagesTab({ projectHash, sessionId, page, onPageChange }: TabProps & 
                             <span>{formatTokens(getTotalTokens(msg.tokens))} tokens</span>
                           )}
                           {msg.tool_names && !isSubagent && (
-                            <span className="text-accent-600 dark:text-accent-400">{msg.tool_names}</span>
+                            <span className="text-accent-600 dark:text-accent-400">
+                              {msg.tool_names}
+                              {msg.tools.length > 0 && msg.tools[0].id && (
+                                <span className="text-purple-600 dark:text-purple-400 ml-1">
+                                  (..{msg.tools[0].id.slice(-4)})
+                                </span>
+                              )}
+                            </span>
+                          )}
+                          {msg.type === 'tool_result' && msg.tool_use_id && (
+                            <span className="text-purple-600 dark:text-purple-400">
+                              (..{msg.tool_use_id.slice(-4)})
+                            </span>
                           )}
                         </div>
                       </div>

@@ -11,29 +11,6 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from .cache import get_persistent_cache
-from .database import (
-    get_project_dir,
-    get_session_path,
-    list_projects as sync_list_projects,
-    list_sessions as sync_list_sessions,
-)
-from .index import (
-    get_global_index,
-    get_projects_from_index,
-    get_sessions_from_index,
-)
-from .log_parser import (
-    get_all_projects_metrics as sync_get_all_projects_metrics,
-    get_project_total_metrics as sync_get_project_total_metrics,
-    get_session_code_changes as sync_get_session_code_changes,
-    get_session_errors as sync_get_session_errors,
-    get_session_metrics as sync_get_session_metrics,
-    get_session_skills as sync_get_session_skills,
-    get_session_subagents as sync_get_session_subagents,
-    get_session_tool_usage as sync_get_session_tool_usage,
-    parse_session_summary as sync_parse_session_summary,
-)
 from ..models.responses import (
     CodeChangesResponse,
     ErrorsResponse,
@@ -43,14 +20,55 @@ from ..models.responses import (
     SubagentListResponse,
     ToolUsageResponse,
 )
-
+from .cache import get_persistent_cache
+from .database import (
+    get_session_path,
+)
+from .database import (
+    list_projects as sync_list_projects,
+)
+from .database import (
+    list_sessions as sync_list_sessions,
+)
+from .index import (
+    get_global_index,
+    get_projects_from_index,
+    get_sessions_from_index,
+)
+from .log_parser import (
+    get_all_projects_metrics as sync_get_all_projects_metrics,
+)
+from .log_parser import (
+    get_project_total_metrics as sync_get_project_total_metrics,
+)
+from .log_parser import (
+    get_session_code_changes as sync_get_session_code_changes,
+)
+from .log_parser import (
+    get_session_errors as sync_get_session_errors,
+)
+from .log_parser import (
+    get_session_metrics as sync_get_session_metrics,
+)
+from .log_parser import (
+    get_session_skills as sync_get_session_skills,
+)
+from .log_parser import (
+    get_session_subagents as sync_get_session_subagents,
+)
+from .log_parser import (
+    get_session_tool_usage as sync_get_session_tool_usage,
+)
+from .log_parser import (
+    parse_session_summary as sync_parse_session_summary,
+)
 
 # ============================================================================
 # Async Project/Session Discovery
 # ============================================================================
 
 
-async def list_projects_async() -> list[dict[str, str]]:
+async def list_projects_async() -> list[dict[str, str | int]]:
     """List all projects asynchronously.
 
     Uses the global index if initialized, otherwise falls back to filesystem scan
@@ -62,7 +80,7 @@ async def list_projects_async() -> list[dict[str, str]]:
     return await asyncio.to_thread(sync_list_projects)
 
 
-async def list_sessions_async(project_hash: str) -> list[dict[str, str]]:
+async def list_sessions_async(project_hash: str) -> list[dict[str, str | None]]:
     """List all sessions for a project asynchronously.
 
     Uses the global index if initialized, otherwise falls back to filesystem scan
@@ -79,51 +97,37 @@ async def list_sessions_async(project_hash: str) -> list[dict[str, str]]:
 # ============================================================================
 
 
-async def parse_session_summary_async(
-    project_hash: str, session_id: str
-) -> SessionSummary | None:
+async def parse_session_summary_async(project_hash: str, session_id: str) -> SessionSummary | None:
     """Parse session summary asynchronously."""
     return await asyncio.to_thread(sync_parse_session_summary, project_hash, session_id)
 
 
-async def get_session_tool_usage_async(
-    project_hash: str, session_id: str
-) -> ToolUsageResponse:
+async def get_session_tool_usage_async(project_hash: str, session_id: str) -> ToolUsageResponse:
     """Get session tool usage asynchronously."""
     return await asyncio.to_thread(sync_get_session_tool_usage, project_hash, session_id)
 
 
-async def get_session_metrics_async(
-    project_hash: str, session_id: str
-) -> SessionMetricsResponse:
+async def get_session_metrics_async(project_hash: str, session_id: str) -> SessionMetricsResponse:
     """Get session metrics asynchronously."""
     return await asyncio.to_thread(sync_get_session_metrics, project_hash, session_id)
 
 
-async def get_session_subagents_async(
-    project_hash: str, session_id: str
-) -> SubagentListResponse:
+async def get_session_subagents_async(project_hash: str, session_id: str) -> SubagentListResponse:
     """Get session subagents asynchronously."""
     return await asyncio.to_thread(sync_get_session_subagents, project_hash, session_id)
 
 
-async def get_session_skills_async(
-    project_hash: str, session_id: str
-) -> SkillsResponse:
+async def get_session_skills_async(project_hash: str, session_id: str) -> SkillsResponse:
     """Get session skills asynchronously."""
     return await asyncio.to_thread(sync_get_session_skills, project_hash, session_id)
 
 
-async def get_session_code_changes_async(
-    project_hash: str, session_id: str
-) -> CodeChangesResponse:
+async def get_session_code_changes_async(project_hash: str, session_id: str) -> CodeChangesResponse:
     """Get session code changes asynchronously."""
     return await asyncio.to_thread(sync_get_session_code_changes, project_hash, session_id)
 
 
-async def get_session_errors_async(
-    project_hash: str, session_id: str
-) -> ErrorsResponse:
+async def get_session_errors_async(project_hash: str, session_id: str) -> ErrorsResponse:
     """Get session errors asynchronously."""
     return await asyncio.to_thread(sync_get_session_errors, project_hash, session_id)
 
@@ -137,9 +141,7 @@ async def get_project_total_metrics_async(
     project_hash: str, session_ids: list[str] | None = None
 ) -> dict[str, Any]:
     """Get project total metrics asynchronously."""
-    return await asyncio.to_thread(
-        sync_get_project_total_metrics, project_hash, session_ids
-    )
+    return await asyncio.to_thread(sync_get_project_total_metrics, project_hash, session_ids)
 
 
 async def get_all_projects_metrics_async() -> dict[str, dict[str, Any]]:

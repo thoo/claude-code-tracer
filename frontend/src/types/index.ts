@@ -72,6 +72,7 @@ export interface Message {
   tokens: TokenUsage;
   tools: ToolUse[];
   tool_names: string;
+  tool_use_id: string | null;  // For tool_result messages, the ID linking to the tool_use
   has_tool_result: boolean;
   is_error: boolean;
   session_id: string;

@@ -56,9 +56,7 @@ def _get_subagent_type(subagent_path: Path) -> str:
     return "custom"
 
 
-def _get_subagent_type_from_session(
-    conn, session_path: Path, agent_id: str
-) -> str:
+def _get_subagent_type_from_session(conn, session_path: Path, agent_id: str) -> str:
     """Get subagent type by querying the parent session's Task tool calls."""
     try:
         result = conn.execute(
@@ -143,9 +141,7 @@ async def get_subagent_tools(project_hash: str, agent_id: str) -> ToolUsageRespo
         return ToolUsageResponse(tools=tools, total_calls=sum(t.count for t in tools))
 
 
-def require_subagent_path_for_session(
-    project_hash: str, session_id: str, agent_id: str
-) -> Path:
+def require_subagent_path_for_session(project_hash: str, session_id: str, agent_id: str) -> Path:
     """Get subagent path for a session and raise 404 if it doesn't exist."""
     subagent_path = get_subagent_path_for_session(project_hash, session_id, agent_id)
     if not subagent_path or not subagent_path.exists():
@@ -393,10 +389,11 @@ def _extract_content_text(msg_content: dict | str | None) -> str:
         return ""
 
     if isinstance(msg_content, str):
+        original_str = msg_content
         try:
             msg_content = orjson.loads(msg_content)
         except (orjson.JSONDecodeError, ValueError):
-            return msg_content[:500]
+            return original_str[:500]
 
     if not isinstance(msg_content, dict):
         return str(msg_content)[:500] if msg_content else ""

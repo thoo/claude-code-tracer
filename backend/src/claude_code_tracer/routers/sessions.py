@@ -139,7 +139,8 @@ async def get_projects() -> ProjectListResponse:
 
     projects = []
     for proj in projects_data:
-        project_hash = proj["path_hash"]
+        project_hash = str(proj["path_hash"])
+        project_path = str(proj["project_path"])
 
         # Use batch metrics if available, otherwise fall back to individual query
         if project_hash in all_metrics:
@@ -152,7 +153,7 @@ async def get_projects() -> ProjectListResponse:
         projects.append(
             ProjectResponse(
                 path_hash=project_hash,
-                project_path=proj["project_path"],
+                project_path=project_path,
                 session_count=metrics.get("session_count", proj.get("session_count", 0)),
                 tokens=TokenUsage(
                     input_tokens=tokens_data.get("input_tokens", 0),
@@ -189,7 +190,10 @@ async def get_project_sessions(project_hash: str) -> SessionListResponse:
 
     sessions = []
     for sess in sessions_data:
-        summary = await parse_session_summary_async(project_hash, sess["session_id"])
+        session_id = sess["session_id"]
+        if not session_id:
+            continue
+        summary = await parse_session_summary_async(project_hash, session_id)
         if summary:
             summary = summary.model_copy()
             summary.slug = sess.get("slug")
@@ -230,7 +234,10 @@ async def get_project_metrics(project_hash: str) -> SessionMetricsResponse:
     total_commands = 0
 
     for sess in sessions_data:
-        metrics = await get_session_metrics_async(project_hash, sess["session_id"])
+        session_id = sess["session_id"]
+        if not session_id:
+            continue
+        metrics = await get_session_metrics_async(project_hash, session_id)
         if metrics:
             total_input_tokens += metrics.tokens.input_tokens
             total_output_tokens += metrics.tokens.output_tokens
@@ -298,7 +305,10 @@ async def get_project_tools(project_hash: str) -> ToolUsageResponse:
     tool_counts: dict[str, int] = {}
 
     for sess in sessions_data:
-        tools_data = await get_session_tool_usage_async(project_hash, sess["session_id"])
+        session_id = sess["session_id"]
+        if not session_id:
+            continue
+        tools_data = await get_session_tool_usage_async(project_hash, session_id)
         if tools_data:
             for tool in tools_data.tools:
                 tool_counts[tool.name] = tool_counts.get(tool.name, 0) + tool.count
@@ -389,7 +399,7 @@ async def get_session_messages(
     use_cursor = cursor is not None
     cursor_ts, cursor_uuid = (None, None)
 
-    if use_cursor:
+    if use_cursor and cursor:
         cursor_ts, cursor_uuid = decode_cursor(cursor)
         if cursor_ts is None or cursor_uuid is None:
             raise HTTPException(status_code=400, detail="Invalid cursor format")
@@ -490,7 +500,9 @@ async def get_session_messages(
     )
 
 
-@router.get("/sessions/{project_hash}/{session_id}/messages/filters", response_model=MessageFilterOptions)
+@router.get(
+    "/sessions/{project_hash}/{session_id}/messages/filters", response_model=MessageFilterOptions
+)
 async def get_session_message_filters(
     project_hash: str,
     session_id: str,
@@ -521,15 +533,11 @@ async def get_session_message_filters(
     with get_connection() as conn:
         try:
             # Get tool names with counts using V2 query with session view
-            tools_result = conn.execute(
-                TOOL_NAMES_LIST_QUERY_V2.format(source=source)
-            ).fetchall()
+            tools_result = conn.execute(TOOL_NAMES_LIST_QUERY_V2.format(source=source)).fetchall()
             tools = [ToolFilterOption(name=row[0], count=row[1]) for row in tools_result]
 
             # Get error count using V2 query with session view
-            error_result = conn.execute(
-                ERROR_COUNT_QUERY_V2.format(source=source)
-            ).fetchone()
+            error_result = conn.execute(ERROR_COUNT_QUERY_V2.format(source=source)).fetchone()
             error_count = error_result[0] if error_result else 0
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e)) from e
@@ -738,6 +746,76 @@ def _parse_usage_data(usage_data: str | dict | None) -> TokenUsage:
     )
 
 
+def _extract_tool_use_id(msg_content: dict | str | None) -> str | None:
+    """Extract tool_use_id from a tool_result message content.
+
+    Tool result messages have content blocks with tool_use_id field.
+    """
+    if msg_content is None:
+        return None
+
+    # If it's a string, try to parse it as JSON
+    if isinstance(msg_content, str):
+        try:
+            msg_content = orjson.loads(msg_content)
+        except (orjson.JSONDecodeError, ValueError):
+            return None
+
+    if not isinstance(msg_content, dict):
+        return None
+
+    raw_content = msg_content.get("content")
+
+    # Check for tool_use_id at the top level of content blocks
+    if isinstance(raw_content, list):
+        for block in raw_content:
+            if isinstance(block, dict) and block.get("type") == "tool_result":
+                tool_use_id = block.get("tool_use_id")
+                if tool_use_id:
+                    return str(tool_use_id)
+
+    return None
+
+
+def _extract_tools_summary(msg_content: dict | str | None) -> list[ToolUse]:
+    """Extract tool uses (with IDs) from assistant message content.
+
+    Only extracts id and name to keep the response lightweight.
+    """
+    if msg_content is None:
+        return []
+
+    # If it's a string, try to parse it as JSON
+    if isinstance(msg_content, str):
+        try:
+            msg_content = orjson.loads(msg_content)
+        except (orjson.JSONDecodeError, ValueError):
+            return []
+
+    if not isinstance(msg_content, dict):
+        return []
+
+    raw_content = msg_content.get("content")
+    tools = []
+
+    if isinstance(raw_content, list):
+        for block in raw_content:
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                tool_id = block.get("id", "")
+                tool_name = block.get("name", "")
+                if tool_id or tool_name:
+                    tools.append(
+                        ToolUse(
+                            type="tool_use",
+                            id=str(tool_id) if tool_id else "",
+                            name=str(tool_name) if tool_name else "",
+                            input={},  # Keep empty to reduce payload
+                        )
+                    )
+
+    return tools
+
+
 def _parse_comprehensive_message_row(row: tuple) -> MessageResponse:
     """Parse a comprehensive query row into a MessageResponse.
 
@@ -755,6 +833,8 @@ def _parse_comprehensive_message_row(row: tuple) -> MessageResponse:
     """
     msg_type = row[1]
     is_subagent = msg_type == "subagent"
+    is_tool_result = msg_type == "tool_result"
+    is_assistant = msg_type == "assistant"
 
     # Subagent content is JSON from DuckDB - keep as-is; otherwise extract and truncate
     if is_subagent:
@@ -763,6 +843,16 @@ def _parse_comprehensive_message_row(row: tuple) -> MessageResponse:
         raw_content = _extract_content_text(row[3])
         content_text = raw_content[:500] if raw_content else None
 
+    # Extract tool_use_id for tool_result messages
+    tool_use_id = None
+    if is_tool_result:
+        tool_use_id = _extract_tool_use_id(row[3])
+
+    # Extract tool IDs for assistant messages with tools
+    tools = []
+    if is_assistant and row[7]:  # row[7] is tool_names
+        tools = _extract_tools_summary(row[3])
+
     return MessageResponse(
         uuid=str(row[0]),
         type=msg_type,
@@ -770,9 +860,10 @@ def _parse_comprehensive_message_row(row: tuple) -> MessageResponse:
         content=content_text,
         model=row[4],
         tokens=_parse_usage_data(row[5]),
-        tools=[],
+        tools=tools,
         tool_names=row[7] or "",
-        has_tool_result=msg_type == "tool_result",
+        tool_use_id=tool_use_id,
+        has_tool_result=is_tool_result,
         is_error=bool(row[8]),
         session_id=str(row[6]),
     )
@@ -789,11 +880,12 @@ def _extract_content_text(msg_content: dict | str | None) -> str:
 
     # If it's a string, try to parse it as JSON
     if isinstance(msg_content, str):
+        original_str = msg_content
         try:
             msg_content = orjson.loads(msg_content)
         except (orjson.JSONDecodeError, ValueError):
             # If it's not valid JSON, return the string directly
-            return msg_content[:500]
+            return original_str[:500]
 
     if not isinstance(msg_content, dict):
         return str(msg_content)[:500] if msg_content else ""

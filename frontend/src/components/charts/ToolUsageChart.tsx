@@ -32,7 +32,7 @@ const COLORS = [
 export default function ToolUsageChart({ tools, maxItems = 10 }: ToolUsageChartProps) {
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === 'dark';
-  
+
   // Sort by count and take top items
   const sortedTools = [...tools]
     .sort((a, b) => b.count - a.count)

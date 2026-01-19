@@ -1,7 +1,7 @@
 """JSONL log file parsing service using DuckDB."""
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -24,7 +24,7 @@ from ..models.responses import (
     ToolUsageResponse,
     ToolUsageStats,
 )
-from ..utils.datetime import normalize_datetime, now_utc, parse_timestamp
+from ..utils.datetime import now_utc, parse_timestamp
 from .database import (
     get_connection,
     get_session_path,
@@ -49,9 +49,7 @@ from .queries import (
     TOKEN_USAGE_BY_MODEL_QUERY_V2,
     TOKEN_USAGE_QUERY_V2,
     TOOL_USAGE_QUERY_V2,
-    make_source_query,
 )
-
 
 # Use standardized datetime utility (Priority 4.5)
 _parse_timestamp = parse_timestamp
@@ -133,9 +131,7 @@ def _accumulate_subagent_data(
     for subagent_path in subagent_files:
         # Use session view for each subagent file
         source = get_session_view_query(subagent_path)
-        model_rows = _execute_query_all(
-            conn, TOKEN_USAGE_BY_MODEL_QUERY_V2.format(source=source)
-        )
+        model_rows = _execute_query_all(conn, TOKEN_USAGE_BY_MODEL_QUERY_V2.format(source=source))
         for row in model_rows:
             model = row[0]
             if not model:
@@ -178,7 +174,7 @@ def _determine_session_status(
         session_path: Path to session file
         source: Optional pre-computed source query string. If not provided, will be computed.
     """
-    file_mtime = datetime.fromtimestamp(session_path.stat().st_mtime, tz=timezone.utc)
+    file_mtime = datetime.fromtimestamp(session_path.stat().st_mtime, tz=UTC)
     seconds_since_modified = (now_utc() - file_mtime).total_seconds()
 
     if source is None:
@@ -226,8 +222,8 @@ def _cached_session_summary_impl(
 
         time_result = _execute_query(conn, SESSION_TIMERANGE_QUERY_V2.format(source=source))
         start_time = (
-            _parse_timestamp(time_result[0]) if time_result and time_result[0] else datetime.now()
-        )
+            _parse_timestamp(time_result[0]) if time_result and time_result[0] else None
+        ) or datetime.now()
         end_time = _parse_timestamp(time_result[1]) if time_result and time_result[1] else None
 
         duration_seconds = 0
@@ -671,8 +667,7 @@ def get_project_total_metrics(
 
             # Get token usage by model for accurate cost calculation
             model_rows = _execute_query_all(
-                conn,
-                TOKEN_USAGE_BY_MODEL_GLOB_QUERY.format(paths=f"'{glob_pattern}'")
+                conn, TOKEN_USAGE_BY_MODEL_GLOB_QUERY.format(paths=f"'{glob_pattern}'")
             )
 
             total_cost = 0.0
@@ -691,8 +686,7 @@ def get_project_total_metrics(
             # Add subagent costs
             subagent_pattern = str(project_dir / "**/agent-*.jsonl")
             subagent_model_rows = _execute_query_all(
-                conn,
-                TOKEN_USAGE_BY_MODEL_GLOB_QUERY.format(paths=f"'{subagent_pattern}'")
+                conn, TOKEN_USAGE_BY_MODEL_GLOB_QUERY.format(paths=f"'{subagent_pattern}'")
             )
             for row in subagent_model_rows:
                 model = row[0]
@@ -734,7 +728,7 @@ def _get_project_total_metrics_fallback(
     """Fallback method for project metrics using individual session queries."""
     if session_ids is None:
         sessions = list_sessions(project_hash)
-        session_ids = [s["session_id"] for s in sessions]
+        session_ids = [s["session_id"] for s in sessions if s["session_id"]]
 
     input_tokens = 0
     output_tokens = 0
@@ -864,8 +858,7 @@ def get_all_projects_metrics() -> dict[str, dict[str, Any]]:
                 # Include subagent metrics for this project
                 subagent_pattern = str(PROJECTS_DIR / project_hash / "**/agent-*.jsonl")
                 subagent_model_rows = _execute_query_all(
-                    conn,
-                    TOKEN_USAGE_BY_MODEL_GLOB_QUERY.format(paths=f"'{subagent_pattern}'")
+                    conn, TOKEN_USAGE_BY_MODEL_GLOB_QUERY.format(paths=f"'{subagent_pattern}'")
                 )
                 for sub_row in subagent_model_rows:
                     model = sub_row[0]
@@ -956,9 +949,7 @@ def get_batch_subagent_metrics(
         except Exception:
             # Fall back to sequential method
             tokens = TokenUsage()
-            total_cost = _accumulate_subagent_data(
-                conn, subagent_paths, tokens, None, None
-            )
+            total_cost = _accumulate_subagent_data(conn, subagent_paths, tokens, None, None)
             return tokens, total_cost, []
 
 
@@ -971,9 +962,7 @@ def get_batch_error_count(paths: list[Path]) -> int:
 
     with get_connection() as conn:
         try:
-            result = conn.execute(
-                ERROR_COUNT_GLOB_QUERY.format(paths=f"[{paths_str}]")
-            ).fetchone()
+            result = conn.execute(ERROR_COUNT_GLOB_QUERY.format(paths=f"[{paths_str}]")).fetchone()
             return result[0] if result else 0
         except Exception:
             # Fall back to sequential

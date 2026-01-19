@@ -193,23 +193,17 @@ class PersistentCache:
 
             return session
 
-    def set_session_metrics(
-        self, project_hash: str, metrics: SessionAggregateMetrics
-    ) -> None:
+    def set_session_metrics(self, project_hash: str, metrics: SessionAggregateMetrics) -> None:
         """Store metrics for a session."""
         with self._lock:
             if project_hash not in self._projects:
-                self._projects[project_hash] = ProjectAggregateCache(
-                    project_hash=project_hash
-                )
+                self._projects[project_hash] = ProjectAggregateCache(project_hash=project_hash)
 
             self._projects[project_hash].sessions[metrics.session_id] = metrics
             self._projects[project_hash].last_updated = metrics.mtime
             self._dirty = True
 
-    def get_project_cached_totals(
-        self, project_hash: str
-    ) -> tuple[dict[str, Any], set[str]]:
+    def get_project_cached_totals(self, project_hash: str) -> tuple[dict[str, Any], set[str]]:
         """Get cached totals for completed sessions in a project.
 
         Returns:

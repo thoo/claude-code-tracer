@@ -49,7 +49,7 @@ class DuckDBPool:
             if cls._instance is not None:
                 cls._instance.close()
                 cls._instance = None
-            
+
             # Clear session views cache as views are lost when connection closes
             with _session_views_lock:
                 _session_views.clear()
@@ -98,10 +98,7 @@ def get_or_create_session_view(session_path: Path) -> str:
             view_name, created_time, cached_mtime = _session_views[path_str]
 
             # Check if view is still valid (not expired and file unchanged)
-            if (
-                current_time - created_time < SESSION_VIEW_TTL
-                and cached_mtime == current_mtime
-            ):
+            if current_time - created_time < SESSION_VIEW_TTL and cached_mtime == current_mtime:
                 # Verify view actually exists in DB (safeguard against connection resets)
                 try:
                     # Quick check using a cursor
@@ -111,7 +108,7 @@ def get_or_create_session_view(session_path: Path) -> str:
                 except Exception:
                     # View missing, remove from cache and recreate
                     pass
-            
+
             # View is stale or missing, remove from cache
             try:
                 conn = DuckDBPool.get_connection()
@@ -269,9 +266,7 @@ def get_subagent_path(project_hash: str, agent_id: str) -> Path:
     return project_dir / agent_filename
 
 
-def get_subagent_path_for_session(
-    project_hash: str, session_id: str, agent_id: str
-) -> Path | None:
+def get_subagent_path_for_session(project_hash: str, session_id: str, agent_id: str) -> Path | None:
     """Get path to a specific subagent JSONL file for a session.
 
     Searches in:
@@ -367,12 +362,12 @@ def get_sessions_index_path(project_hash: str) -> Path:
     return PROJECTS_DIR / project_hash / "sessions-index.json"
 
 
-def list_projects() -> list[dict[str, str]]:
+def list_projects() -> list[dict[str, str | int]]:
     """List all projects from ~/.claude/projects/."""
     if not PROJECTS_DIR.exists():
         return []
 
-    projects = []
+    projects: list[dict[str, str | int]] = []
     for project_dir in PROJECTS_DIR.iterdir():
         if not project_dir.is_dir() or project_dir.name == "-home-":
             continue
@@ -380,11 +375,13 @@ def list_projects() -> list[dict[str, str]]:
         project_path = _get_project_path_from_index(project_dir)
         session_count = len(list_sessions(project_dir.name))
 
-        projects.append({
-            "path_hash": project_dir.name,
-            "project_path": project_path,
-            "session_count": session_count,
-        })
+        projects.append(
+            {
+                "path_hash": project_dir.name,
+                "project_path": project_path,
+                "session_count": session_count,
+            }
+        )
 
     return projects
 
@@ -419,10 +416,7 @@ def _extract_project_path_from_index(index_path: Path) -> str | None:
 
 def _extract_project_path_from_jsonl(project_dir: Path) -> str:
     """Extract project path from JSONL files by reading cwd field."""
-    jsonl_files = [
-        f for f in project_dir.glob("*.jsonl")
-        if not f.name.startswith("agent-")
-    ]
+    jsonl_files = [f for f in project_dir.glob("*.jsonl") if not f.name.startswith("agent-")]
 
     for jsonl_file in jsonl_files[:5]:
         try:
@@ -451,7 +445,7 @@ def _extract_index_entries(index_data: dict | list) -> list[dict]:
     return []
 
 
-def list_sessions(project_hash: str) -> list[dict[str, str]]:
+def list_sessions(project_hash: str) -> list[dict[str, str | None]]:
     """List all sessions for a project.
 
     Merges sessions from both the index file and filesystem scan to ensure
@@ -463,7 +457,7 @@ def list_sessions(project_hash: str) -> list[dict[str, str]]:
 
     # Get sessions from index (deduplicate by session_id)
     seen_ids: set[str] = set()
-    sessions: list[dict[str, str]] = []
+    sessions: list[dict[str, str | None]] = []
 
     for session in _get_sessions_from_index(project_hash):
         session_id = session["session_id"]
@@ -480,16 +474,18 @@ def list_sessions(project_hash: str) -> list[dict[str, str]]:
         if f.stem in seen_ids:
             continue
         seen_ids.add(f.stem)
-        sessions.append({
-            "session_id": f.stem,
-            "slug": None,
-            "directory": str(project_dir),
-        })
+        sessions.append(
+            {
+                "session_id": f.stem,
+                "slug": None,
+                "directory": str(project_dir),
+            }
+        )
 
     return sessions
 
 
-def _get_sessions_from_index(project_hash: str) -> list[dict[str, str]]:
+def _get_sessions_from_index(project_hash: str) -> list[dict[str, str | None]]:
     """Get sessions from sessions-index.json if available."""
     index_path = get_sessions_index_path(project_hash)
     if not index_path.exists():

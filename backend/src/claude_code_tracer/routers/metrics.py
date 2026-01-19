@@ -131,7 +131,7 @@ async def get_aggregate_metrics(
     last_activity = None
 
     for proj in projects:
-        metrics = get_project_total_metrics(proj["path_hash"])
+        metrics = get_project_total_metrics(str(proj["path_hash"]))
         tokens = metrics.get("tokens", {})
         input_tokens += tokens.get("input_tokens", 0)
         output_tokens += tokens.get("output_tokens", 0)
@@ -166,14 +166,12 @@ async def get_aggregate_metrics(
 def _format_project_metrics(metrics: dict) -> dict:
     """Format project metrics for API response."""
     tokens = metrics.get("tokens", {})
+    first_activity = metrics.get("first_activity")
+    last_activity = metrics.get("last_activity")
     return {
         "tokens": tokens,
         "total_cost": metrics.get("total_cost", 0.0),
         "session_count": metrics.get("session_count", 0),
-        "first_activity": (
-            metrics.get("first_activity").isoformat() if metrics.get("first_activity") else None
-        ),
-        "last_activity": (
-            metrics.get("last_activity").isoformat() if metrics.get("last_activity") else None
-        ),
+        "first_activity": first_activity.isoformat() if first_activity else None,
+        "last_activity": last_activity.isoformat() if last_activity else None,
     }

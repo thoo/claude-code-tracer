@@ -1,36 +1,27 @@
 """Tests for Phase 4 features: Background Index, Persistent Cache, Async I/O, Datetime Standardization."""
 
-import asyncio
 import json
-import tempfile
-import time
-from datetime import datetime, timezone, timedelta
-from pathlib import Path
-from unittest.mock import patch, AsyncMock, MagicMock
+from datetime import UTC, datetime, timedelta, timezone
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from claude_code_tracer.utils.datetime import normalize_datetime, parse_timestamp, now_utc
 from claude_code_tracer.services.cache import (
     PersistentCache,
     SessionAggregateMetrics,
-    ProjectAggregateCache,
-    get_persistent_cache,
-    CACHE_FILE,
 )
 from claude_code_tracer.services.index import (
     GlobalIndex,
     ProjectIndex,
     SessionMetadata,
-    get_global_index,
     get_projects_from_index,
     get_sessions_from_index,
 )
+from claude_code_tracer.utils.datetime import normalize_datetime, now_utc, parse_timestamp
 
-
-# ============================================================================ 
+# ============================================================================
 # Tests for utils/datetime.py (Priority 4.5)
-# ============================================================================ 
+# ============================================================================
 
 
 class TestNormalizeDatetime:
@@ -39,15 +30,15 @@ class TestNormalizeDatetime:
     def test_none_returns_min_datetime_with_utc(self):
         """None should return datetime.min with UTC timezone."""
         result = normalize_datetime(None)
-        assert result == datetime.min.replace(tzinfo=timezone.utc)
-        assert result.tzinfo == timezone.utc
+        assert result == datetime.min.replace(tzinfo=UTC)
+        assert result.tzinfo == UTC
 
     def test_naive_datetime_becomes_utc(self):
         """Naive datetime should be assumed UTC."""
         naive = datetime(2024, 6, 15, 12, 30, 45)
         result = normalize_datetime(naive)
-        assert result == datetime(2024, 6, 15, 12, 30, 45, tzinfo=timezone.utc)
-        assert result.tzinfo == timezone.utc
+        assert result == datetime(2024, 6, 15, 12, 30, 45, tzinfo=UTC)
+        assert result.tzinfo == UTC
 
     def test_aware_datetime_converted_to_utc(self):
         """Aware datetime should be converted to UTC."""
@@ -56,34 +47,34 @@ class TestNormalizeDatetime:
         aware = datetime(2024, 6, 15, 17, 30, 45, tzinfo=offset)
         result = normalize_datetime(aware)
         # 17:30 at +05:00 is 12:30 UTC
-        assert result == datetime(2024, 6, 15, 12, 30, 45, tzinfo=timezone.utc)
-        assert result.tzinfo == timezone.utc
+        assert result == datetime(2024, 6, 15, 12, 30, 45, tzinfo=UTC)
+        assert result.tzinfo == UTC
 
     def test_utc_datetime_unchanged(self):
         """UTC datetime should remain unchanged."""
-        utc_dt = datetime(2024, 6, 15, 12, 30, 45, tzinfo=timezone.utc)
+        utc_dt = datetime(2024, 6, 15, 12, 30, 45, tzinfo=UTC)
         result = normalize_datetime(utc_dt)
         assert result == utc_dt
 
     def test_iso_string_with_z_suffix(self):
         """ISO string with Z suffix should be parsed correctly."""
         result = normalize_datetime("2024-06-15T12:30:45Z")
-        assert result == datetime(2024, 6, 15, 12, 30, 45, tzinfo=timezone.utc)
+        assert result == datetime(2024, 6, 15, 12, 30, 45, tzinfo=UTC)
 
     def test_iso_string_with_offset(self):
         """ISO string with offset should be parsed and converted to UTC."""
         result = normalize_datetime("2024-06-15T17:30:45+05:00")
-        assert result == datetime(2024, 6, 15, 12, 30, 45, tzinfo=timezone.utc)
+        assert result == datetime(2024, 6, 15, 12, 30, 45, tzinfo=UTC)
 
     def test_invalid_string_returns_min_datetime(self):
         """Invalid string should return datetime.min with UTC."""
         result = normalize_datetime("not-a-date")
-        assert result == datetime.min.replace(tzinfo=timezone.utc)
+        assert result == datetime.min.replace(tzinfo=UTC)
 
     def test_empty_string_returns_min_datetime(self):
         """Empty string should return datetime.min with UTC."""
         result = normalize_datetime("")
-        assert result == datetime.min.replace(tzinfo=timezone.utc)
+        assert result == datetime.min.replace(tzinfo=UTC)
 
 
 class TestParseTimestamp:
@@ -97,7 +88,7 @@ class TestParseTimestamp:
         """Naive datetime should become UTC-aware."""
         naive = datetime(2024, 6, 15, 12, 30, 45)
         result = parse_timestamp(naive)
-        assert result == datetime(2024, 6, 15, 12, 30, 45, tzinfo=timezone.utc)
+        assert result == datetime(2024, 6, 15, 12, 30, 45, tzinfo=UTC)
 
     def test_aware_datetime_converted_to_utc(self):
         """Aware datetime should be converted to UTC."""
@@ -105,17 +96,17 @@ class TestParseTimestamp:
         aware = datetime(2024, 6, 15, 9, 30, 45, tzinfo=offset)
         result = parse_timestamp(aware)
         # 09:30 at -03:00 is 12:30 UTC
-        assert result == datetime(2024, 6, 15, 12, 30, 45, tzinfo=timezone.utc)
+        assert result == datetime(2024, 6, 15, 12, 30, 45, tzinfo=UTC)
 
     def test_iso_string_with_z(self):
         """ISO string with Z should be parsed correctly."""
         result = parse_timestamp("2024-06-15T12:30:45Z")
-        assert result == datetime(2024, 6, 15, 12, 30, 45, tzinfo=timezone.utc)
+        assert result == datetime(2024, 6, 15, 12, 30, 45, tzinfo=UTC)
 
     def test_iso_string_with_offset(self):
         """ISO string with offset should be parsed and converted."""
         result = parse_timestamp("2024-06-15T12:30:45+00:00")
-        assert result == datetime(2024, 6, 15, 12, 30, 45, tzinfo=timezone.utc)
+        assert result == datetime(2024, 6, 15, 12, 30, 45, tzinfo=UTC)
 
     def test_invalid_string_returns_none(self):
         """Invalid string should return None."""
@@ -132,19 +123,19 @@ class TestNowUtc:
     def test_returns_utc_aware_datetime(self):
         """Should return a UTC-aware datetime."""
         result = now_utc()
-        assert result.tzinfo == timezone.utc
+        assert result.tzinfo == UTC
 
     def test_returns_current_time(self):
         """Should return approximately current time."""
-        before = datetime.now(timezone.utc)
+        before = datetime.now(UTC)
         result = now_utc()
-        after = datetime.now(timezone.utc)
+        after = datetime.now(UTC)
         assert before <= result <= after
 
 
-# ============================================================================ 
+# ============================================================================
 # Tests for services/index.py (Priority 4.1)
-# ============================================================================ 
+# ============================================================================
 
 
 class TestSessionMetadata:
@@ -220,7 +211,7 @@ def mock_projects_dir(tmp_path):
             {
                 "sessionId": "11111111-1111-1111-1111-111111111111",
                 "slug": "test-session",
-                "projectPath": "/path/to/project"
+                "projectPath": "/path/to/project",
             }
         ]
     }
@@ -271,8 +262,10 @@ def test_get_projects_from_index_fallback():
 
     # Patch the imported function in database module
     with patch("claude_code_tracer.services.database.list_projects") as mock_list:
-        mock_list.return_value = [{"path_hash": "test", "project_path": "/test", "session_count": 0}]
-        result = get_projects_from_index()
+        mock_list.return_value = [
+            {"path_hash": "test", "project_path": "/test", "session_count": 0}
+        ]
+        get_projects_from_index()
         mock_list.assert_called_once()
 
 
@@ -285,13 +278,13 @@ def test_get_sessions_from_index_fallback():
     # Patch the imported function in database module
     with patch("claude_code_tracer.services.database.list_sessions") as mock_list:
         mock_list.return_value = [{"session_id": "test", "slug": None, "directory": ""}]
-        result = get_sessions_from_index("test-hash")
+        get_sessions_from_index("test-hash")
         mock_list.assert_called_once_with("test-hash")
 
 
-# ============================================================================ 
+# ============================================================================
 # Tests for services/cache.py - PersistentCache (Priority 4.3)
-# ============================================================================ 
+# ============================================================================
 
 
 class TestSessionAggregateMetrics:
@@ -299,10 +292,7 @@ class TestSessionAggregateMetrics:
 
     def test_default_values(self):
         """Test default values."""
-        metrics = SessionAggregateMetrics(
-            session_id="test-session",
-            status="completed"
-        )
+        metrics = SessionAggregateMetrics(session_id="test-session", status="completed")
         assert metrics.session_id == "test-session"
         assert metrics.status == "completed"
         assert metrics.input_tokens == 0
@@ -337,7 +327,7 @@ class TestPersistentCache:
             input_tokens=1000,
             output_tokens=500,
             total_cost=0.05,
-            mtime=12345.0
+            mtime=12345.0,
         )
 
         cache.set_session_metrics("project-1", metrics)
@@ -352,11 +342,7 @@ class TestPersistentCache:
         """Cache should return None if mtime doesn't match."""
         cache = PersistentCache()
 
-        metrics = SessionAggregateMetrics(
-            session_id="session-1",
-            status="completed",
-            mtime=12345.0
-        )
+        metrics = SessionAggregateMetrics(session_id="session-1", status="completed", mtime=12345.0)
         cache.set_session_metrics("project-1", metrics)
 
         # Different mtime should return None
@@ -370,7 +356,7 @@ class TestPersistentCache:
         metrics = SessionAggregateMetrics(
             session_id="session-1",
             status="running",  # Not completed
-            mtime=12345.0
+            mtime=12345.0,
         )
         cache.set_session_metrics("project-1", metrics)
 
@@ -389,7 +375,7 @@ class TestPersistentCache:
                 input_tokens=100,
                 output_tokens=50,
                 total_cost=0.01,
-                mtime=12345.0
+                mtime=12345.0,
             )
             cache.set_session_metrics("project-1", metrics)
 
@@ -405,18 +391,18 @@ class TestPersistentCache:
         cache = PersistentCache()
 
         # Add one completed and one running session
-        cache.set_session_metrics("project-1", SessionAggregateMetrics(
-            session_id="completed-1",
-            status="completed",
-            input_tokens=100,
-            mtime=12345.0
-        ))
-        cache.set_session_metrics("project-1", SessionAggregateMetrics(
-            session_id="running-1",
-            status="running",
-            input_tokens=500,
-            mtime=12345.0
-        ))
+        cache.set_session_metrics(
+            "project-1",
+            SessionAggregateMetrics(
+                session_id="completed-1", status="completed", input_tokens=100, mtime=12345.0
+            ),
+        )
+        cache.set_session_metrics(
+            "project-1",
+            SessionAggregateMetrics(
+                session_id="running-1", status="running", input_tokens=500, mtime=12345.0
+            ),
+        )
 
         totals, cached_ids = cache.get_project_cached_totals("project-1")
 
@@ -428,11 +414,10 @@ class TestPersistentCache:
         """Test invalidating a specific session."""
         cache = PersistentCache()
 
-        cache.set_session_metrics("project-1", SessionAggregateMetrics(
-            session_id="session-1",
-            status="completed",
-            mtime=12345.0
-        ))
+        cache.set_session_metrics(
+            "project-1",
+            SessionAggregateMetrics(session_id="session-1", status="completed", mtime=12345.0),
+        )
 
         # Verify it exists
         assert cache.get_session_metrics("project-1", "session-1", 12345.0) is not None
@@ -447,16 +432,14 @@ class TestPersistentCache:
         """Test invalidating all sessions for a project."""
         cache = PersistentCache()
 
-        cache.set_session_metrics("project-1", SessionAggregateMetrics(
-            session_id="session-1",
-            status="completed",
-            mtime=12345.0
-        ))
-        cache.set_session_metrics("project-1", SessionAggregateMetrics(
-            session_id="session-2",
-            status="completed",
-            mtime=12345.0
-        ))
+        cache.set_session_metrics(
+            "project-1",
+            SessionAggregateMetrics(session_id="session-1", status="completed", mtime=12345.0),
+        )
+        cache.set_session_metrics(
+            "project-1",
+            SessionAggregateMetrics(session_id="session-2", status="completed", mtime=12345.0),
+        )
 
         cache.invalidate_project("project-1")
 
@@ -467,11 +450,10 @@ class TestPersistentCache:
         """Test clearing all cached data."""
         cache = PersistentCache()
 
-        cache.set_session_metrics("project-1", SessionAggregateMetrics(
-            session_id="session-1",
-            status="completed",
-            mtime=12345.0
-        ))
+        cache.set_session_metrics(
+            "project-1",
+            SessionAggregateMetrics(session_id="session-1", status="completed", mtime=12345.0),
+        )
 
         cache.clear()
 
@@ -491,13 +473,16 @@ def test_persistent_cache_save_and_load(tmp_path):
 
             # Create cache and add data
             cache = PersistentCache()
-            cache.set_session_metrics("project-1", SessionAggregateMetrics(
-                session_id="session-1",
-                status="completed",
-                input_tokens=1000,
-                total_cost=0.05,
-                mtime=12345.0
-            ))
+            cache.set_session_metrics(
+                "project-1",
+                SessionAggregateMetrics(
+                    session_id="session-1",
+                    status="completed",
+                    input_tokens=1000,
+                    total_cost=0.05,
+                    mtime=12345.0,
+                ),
+            )
 
             # Save to disk
             cache.save()
@@ -514,9 +499,9 @@ def test_persistent_cache_save_and_load(tmp_path):
             assert metrics.total_cost == 0.05
 
 
-# ============================================================================ 
+# ============================================================================
 # Tests for services/async_io.py (Priority 4.2)
-# ============================================================================ 
+# ============================================================================
 
 
 @pytest.mark.asyncio
@@ -525,16 +510,14 @@ async def test_list_projects_async_uses_index_when_initialized():
     GlobalIndex._instance = None
     idx = GlobalIndex()
     idx._initialized = True
-    idx._projects = {
-        "hash1": ProjectIndex(path_hash="hash1", project_path="/path1")
-    }
+    idx._projects = {"hash1": ProjectIndex(path_hash="hash1", project_path="/path1")}
 
     from claude_code_tracer.services.async_io import list_projects_async
 
     with patch("claude_code_tracer.services.async_io.get_global_index", return_value=idx):
         with patch("claude_code_tracer.services.async_io.get_projects_from_index") as mock_get:
             mock_get.return_value = [{"path_hash": "hash1", "project_path": "/path1"}]
-            result = await list_projects_async()
+            await list_projects_async()
             mock_get.assert_called_once()
 
 
@@ -550,7 +533,7 @@ async def test_list_projects_async_falls_back_when_not_initialized():
     with patch("claude_code_tracer.services.async_io.get_global_index", return_value=idx):
         with patch("claude_code_tracer.services.async_io.sync_list_projects") as mock_sync:
             mock_sync.return_value = [{"path_hash": "test"}]
-            result = await list_projects_async()
+            await list_projects_async()
             # sync function is called via asyncio.to_thread
             mock_sync.assert_called_once()
 
@@ -567,24 +550,23 @@ async def test_list_sessions_async_uses_index_when_initialized():
     with patch("claude_code_tracer.services.async_io.get_global_index", return_value=idx):
         with patch("claude_code_tracer.services.async_io.get_sessions_from_index") as mock_get:
             mock_get.return_value = [{"session_id": "sess1"}]
-            result = await list_sessions_async("hash1")
+            await list_sessions_async("hash1")
             mock_get.assert_called_once_with("hash1")
 
 
 @pytest.mark.asyncio
 async def test_parse_session_summary_async():
     """Test async wrapper for parse_session_summary."""
-    from claude_code_tracer.services.async_io import parse_session_summary_async
     from claude_code_tracer.models.responses import SessionSummary, TokenUsage
+    from claude_code_tracer.services.async_io import parse_session_summary_async
 
     mock_summary = SessionSummary(
-        session_id="test",
-        status="completed",
-        tokens=TokenUsage(),
-        start_time=now_utc()
+        session_id="test", status="completed", tokens=TokenUsage(), start_time=now_utc()
     )
 
-    with patch("claude_code_tracer.services.async_io.sync_parse_session_summary", return_value=mock_summary):
+    with patch(
+        "claude_code_tracer.services.async_io.sync_parse_session_summary", return_value=mock_summary
+    ):
         result = await parse_session_summary_async("proj", "sess")
         assert result == mock_summary
 
@@ -592,12 +574,15 @@ async def test_parse_session_summary_async():
 @pytest.mark.asyncio
 async def test_get_session_tool_usage_async():
     """Test async wrapper for get_session_tool_usage."""
-    from claude_code_tracer.services.async_io import get_session_tool_usage_async
     from claude_code_tracer.models.responses import ToolUsageResponse
+    from claude_code_tracer.services.async_io import get_session_tool_usage_async
 
     mock_response = ToolUsageResponse(tools=[], total_calls=0)
 
-    with patch("claude_code_tracer.services.async_io.sync_get_session_tool_usage", return_value=mock_response):
+    with patch(
+        "claude_code_tracer.services.async_io.sync_get_session_tool_usage",
+        return_value=mock_response,
+    ):
         result = await get_session_tool_usage_async("proj", "sess")
         assert result == mock_response
 
@@ -614,7 +599,10 @@ async def test_check_session_exists_async(tmp_path):
     with patch("claude_code_tracer.services.async_io.get_session_path", return_value=session_file):
         assert await check_session_exists_async("proj", "sess") is True
 
-    with patch("claude_code_tracer.services.async_io.get_session_path", return_value=tmp_path / "nonexistent.jsonl"):
+    with patch(
+        "claude_code_tracer.services.async_io.get_session_path",
+        return_value=tmp_path / "nonexistent.jsonl",
+    ):
         assert await check_session_exists_async("proj", "sess") is False
 
 
@@ -642,14 +630,16 @@ async def test_save_persistent_cache_async():
 
     mock_cache = MagicMock()
 
-    with patch("claude_code_tracer.services.async_io.get_persistent_cache", return_value=mock_cache):
+    with patch(
+        "claude_code_tracer.services.async_io.get_persistent_cache", return_value=mock_cache
+    ):
         await save_persistent_cache_async()
         mock_cache.save.assert_called_once()
 
 
-# ============================================================================ 
+# ============================================================================
 # Integration Tests
-# ============================================================================ 
+# ============================================================================
 
 
 @pytest.mark.asyncio

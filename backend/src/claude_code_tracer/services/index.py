@@ -16,7 +16,7 @@ from typing import Any
 import orjson
 from loguru import logger
 
-from ..utils.datetime import normalize_datetime, now_utc, parse_timestamp
+from ..utils.datetime import now_utc
 from .database import PROJECTS_DIR, is_valid_uuid
 
 
@@ -290,16 +290,18 @@ def get_projects_from_index() -> list[dict[str, Any]]:
 
     projects = []
     for path_hash, project in index.projects.items():
-        projects.append({
-            "path_hash": path_hash,
-            "project_path": project.project_path,
-            "session_count": len(project.sessions),
-        })
+        projects.append(
+            {
+                "path_hash": path_hash,
+                "project_path": project.project_path,
+                "session_count": len(project.sessions),
+            }
+        )
 
     return projects
 
 
-def get_sessions_from_index(project_hash: str) -> list[dict[str, str]]:
+def get_sessions_from_index(project_hash: str) -> list[dict[str, str | None]]:
     """Get sessions for a project from the index.
 
     Returns data in the same format as database.list_sessions() for compatibility.

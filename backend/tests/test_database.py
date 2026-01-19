@@ -1,38 +1,43 @@
 from claude_code_tracer.services.database import is_valid_uuid
 
+
 def test_is_valid_uuid():
     assert is_valid_uuid("550e8400-e29b-41d4-a716-446655440000") is True
     assert is_valid_uuid("not-a-uuid") is False
     assert is_valid_uuid("550e8400-e29b-41d4-a716-44665544000") is False  # too short
-    assert is_valid_uuid("550e8400-e29b-41d4-a716-4466554400000") is False # too long
+    assert is_valid_uuid("550e8400-e29b-41d4-a716-4466554400000") is False  # too long
     assert is_valid_uuid("") is False
+
 
 def test_list_projects(mock_projects_dir):
     from claude_code_tracer.services.database import list_projects
-    
+
     # Create a project directory
     project_hash = "test-project"
     (mock_projects_dir / project_hash).mkdir()
-    
+
     # Create a session file so session_count > 0
     (mock_projects_dir / project_hash / "550e8400-e29b-41d4-a716-446655440000.jsonl").touch()
-    
+
     projects = list_projects()
     assert len(projects) == 1
     assert projects[0]["path_hash"] == project_hash
 
+
 def test_duckdb_pool_singleton():
     from claude_code_tracer.services.database import DuckDBPool
-    
+
     conn1 = DuckDBPool.get_connection()
     conn2 = DuckDBPool.get_connection()
-    
+
     assert conn1 is not None
     assert conn1 is conn2  # Verify they are the same instance
 
+
 def test_subagent_discovery_and_caching(mock_projects_dir):
-    from claude_code_tracer.services.database import get_subagent_files_for_session, _subagent_cache
     import orjson
+
+    from claude_code_tracer.services.database import _subagent_cache, get_subagent_files_for_session
 
     project_hash = "test-project-subagents"
     session_id = "550e8400-e29b-41d4-a716-446655440099"

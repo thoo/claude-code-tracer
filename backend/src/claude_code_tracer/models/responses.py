@@ -15,15 +15,17 @@ class CostBreakdown(BaseModel):
     cache_creation_cost: float = 0.0
     cache_read_cost: float = 0.0
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def total_cost(self) -> float:
-        return sum([
-            self.input_cost,
-            self.output_cost,
-            self.cache_creation_cost,
-            self.cache_read_cost,
-        ])
+        return sum(
+            [
+                self.input_cost,
+                self.output_cost,
+                self.cache_creation_cost,
+                self.cache_read_cost,
+            ]
+        )
 
 
 class ProjectResponse(BaseModel):
@@ -37,15 +39,17 @@ class ProjectResponse(BaseModel):
     last_activity: datetime | None = None
     first_activity: datetime | None = None
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def total_tokens(self) -> int:
-        return sum([
-            self.tokens.input_tokens,
-            self.tokens.output_tokens,
-            self.tokens.cache_creation_input_tokens,
-            self.tokens.cache_read_input_tokens,
-        ])
+        return sum(
+            [
+                self.tokens.input_tokens,
+                self.tokens.output_tokens,
+                self.tokens.cache_creation_input_tokens,
+                self.tokens.cache_read_input_tokens,
+            ]
+        )
 
 
 class ProjectListResponse(BaseModel):
@@ -93,6 +97,7 @@ class MessageResponse(BaseModel):
     tokens: TokenUsage = Field(default_factory=TokenUsage)
     tools: list[ToolUse] = Field(default_factory=list)
     tool_names: str = ""
+    tool_use_id: str | None = None  # For tool_result messages, the ID linking to the tool_use
     has_tool_result: bool = False
     is_error: bool = False
     session_id: str
@@ -166,7 +171,9 @@ class ToolFilterOption(BaseModel):
 class MessageFilterOptions(BaseModel):
     """Available filter options for messages."""
 
-    types: list[str] = Field(default_factory=lambda: ["assistant", "user", "subagent", "hook", "tool_result"])
+    types: list[str] = Field(
+        default_factory=lambda: ["assistant", "user", "subagent", "hook", "tool_result"]
+    )
     tools: list[ToolFilterOption] = Field(default_factory=list)
     error_count: int = 0
 

@@ -11,6 +11,13 @@ Placeholders:
 # Common read_json_auto options (100MB max object size, skip malformed entries, merge schemas)
 _JSON_OPTS = "maximum_object_size=104857600, ignore_errors=true, union_by_name=true"
 
+# Helper for robust content string extraction
+# CAST(to_json(...) AS VARCHAR) ensures we always get a valid JSON string
+# - Lists/Structs become '[{...}]' (valid JSON)
+# - Strings become '"..."' (quoted JSON string)
+# This handles the case where DuckDB might infer message.content as LIST(STRUCT) or VARCHAR unpredictably.
+_CONTENT_AS_JSON_STR = "CAST(to_json(message.content) AS VARCHAR)"
+
 
 def make_source_query(path: str) -> str:
     """Create a read_json_auto query source from a file path.
@@ -20,19 +27,20 @@ def make_source_query(path: str) -> str:
     """
     return f"read_json_auto('{path}', {_JSON_OPTS})"
 
+
 # Reusable SQL snippet for classifying user messages into subtypes
-_USER_TYPE_CASE = """CASE
+_USER_TYPE_CASE = f"""CASE
             WHEN type = 'user'
-                 AND CAST(message.content AS VARCHAR) NOT LIKE '[{{{{"tool_use_id"%' 
-                 AND CAST(message.content AS VARCHAR) NOT LIKE '[{{{{"type":"tool_result"%' 
-                 AND (CAST(message.content AS VARCHAR) LIKE '<command-name>%' 
-                      OR CAST(message.content AS VARCHAR) LIKE '<local-command-caveat>%' 
-                      OR CAST(message.content AS VARCHAR) LIKE '<local-command-stdout>%' 
-                      OR CAST(message.content AS VARCHAR) LIKE '<user-prompt-submit-hook>%')
+                 AND {_CONTENT_AS_JSON_STR} NOT LIKE '[{{{{"tool_use_id"%'
+                 AND {_CONTENT_AS_JSON_STR} NOT LIKE '[{{{{"type":"tool_result"%'
+                 AND ({_CONTENT_AS_JSON_STR} LIKE '"<command-name>%'
+                      OR {_CONTENT_AS_JSON_STR} LIKE '"<local-command-caveat>%'
+                      OR {_CONTENT_AS_JSON_STR} LIKE '"<local-command-stdout>%'
+                      OR {_CONTENT_AS_JSON_STR} LIKE '"<user-prompt-submit-hook>%')
             THEN 'hook'
             WHEN type = 'user'
-                 AND (CAST(message.content AS VARCHAR) LIKE '[{{{{"tool_use_id"%' 
-                      OR CAST(message.content AS VARCHAR) LIKE '[{{{{"type":"tool_result"%')
+                 AND ({_CONTENT_AS_JSON_STR} LIKE '[{{{{"tool_use_id"%'
+                      OR {_CONTENT_AS_JSON_STR} LIKE '[{{{{"type":"tool_result"%')
             THEN 'tool_result'
             ELSE type
         END"""
@@ -45,7 +53,7 @@ FROM read_json_auto('{{path}}', {_JSON_OPTS})
 TOOL_USAGE_QUERY = f"""
 WITH tool_uses AS (
     SELECT
-        unnest(from_json(message.content, '[{{{{"type": "VARCHAR", "name": "VARCHAR", "id": "VARCHAR"}}}}]')) as item,
+        unnest(from_json(CAST(message.content AS JSON), '[{{{{"type": "VARCHAR", "name": "VARCHAR", "id": "VARCHAR"}}}}]')) as item,
         CAST(timestamp AS TIMESTAMP) as tool_use_ts
     FROM read_json_auto('{{path}}', {_JSON_OPTS})
     WHERE type = 'assistant'
@@ -60,12 +68,12 @@ tool_use_list AS (
 ),
 tool_results AS (
     SELECT
-        unnest(from_json(message.content, '[{{{{"tool_use_id": "VARCHAR", "is_error": "BOOLEAN"}}}}]')) as result_item,
+        unnest(from_json(CAST(message.content AS JSON), '[{{{{"tool_use_id": "VARCHAR", "is_error": "BOOLEAN"}}}}]')) as result_item,
         CAST(timestamp AS TIMESTAMP) as tool_result_ts
     FROM read_json_auto('{{path}}', {_JSON_OPTS})
     WHERE type = 'user'
-      AND (CAST(message.content AS VARCHAR) LIKE '[{{{{"tool_use_id"%' 
-           OR CAST(message.content AS VARCHAR) LIKE '[{{{{"type":"tool_result"%')
+      AND ({_CONTENT_AS_JSON_STR} LIKE '[{{{{"tool_use_id"%'
+           OR {_CONTENT_AS_JSON_STR} LIKE '[{{{{"type":"tool_result"%')
 ),
 tool_result_list AS (
     SELECT
@@ -101,7 +109,7 @@ ORDER BY count DESC
 
 TOKEN_USAGE_QUERY = f"""
 WITH deduplicated AS (
-    SELECT DISTINCT ON (message.id) 
+    SELECT DISTINCT ON (message.id)
         message.usage.input_tokens as input_tokens,
         message.usage.output_tokens as output_tokens,
         message.usage.cache_creation_input_tokens as cache_creation,
@@ -157,7 +165,7 @@ WITH user_entries AS (
     FROM read_json_auto('{{path}}', {_JSON_OPTS})
     WHERE type = 'user'
 )
-SELECT * 
+SELECT *
 FROM user_entries
 WHERE content IS NOT NULL
 """
@@ -165,7 +173,7 @@ WHERE content IS NOT NULL
 SUBAGENT_CALLS_QUERY = f"""
 WITH parsed AS (
     SELECT
-        from_json(message.content, '[{{{{"type": "VARCHAR", "name": "VARCHAR", "id": "VARCHAR", "input": "JSON"}}}}]') as content_list,
+        from_json(CAST(message.content AS JSON), '[{{{{"type": "VARCHAR", "name": "VARCHAR", "id": "VARCHAR", "input": "JSON"}}}}]') as content_list,
         timestamp
     FROM read_json_auto('{{path}}', {_JSON_OPTS})
     WHERE type = 'assistant'
@@ -188,7 +196,7 @@ WHERE content_item.type = 'tool_use'
 SKILL_CALLS_QUERY = f"""
 WITH parsed AS (
     SELECT
-        from_json(message.content, '[{{{{"type": "VARCHAR", "name": "VARCHAR", "id": "VARCHAR", "input": "JSON"}}}}]') as content_list,
+        from_json(CAST(message.content AS JSON), '[{{{{"type": "VARCHAR", "name": "VARCHAR", "id": "VARCHAR", "input": "JSON"}}}}]') as content_list,
         timestamp
     FROM read_json_auto('{{path}}', {_JSON_OPTS})
     WHERE type = 'assistant'
@@ -210,7 +218,7 @@ WHERE content_item.type = 'tool_use'
 CODE_CHANGES_QUERY = f"""
 WITH parsed AS (
     SELECT
-        from_json(message.content, '[{{{{"type": "VARCHAR", "name": "VARCHAR", "input": "JSON"}}}}]') as content_list
+        from_json(CAST(message.content AS JSON), '[{{{{"type": "VARCHAR", "name": "VARCHAR", "input": "JSON"}}}}]') as content_list
     FROM read_json_auto('{{path}}', {_JSON_OPTS})
     WHERE type = 'assistant'
 ),
@@ -238,7 +246,7 @@ FROM read_json_auto('{{path}}', {_JSON_OPTS})
 
 SESSION_STATUS_QUERY = f"""
 WITH last_msg AS (
-    SELECT CAST(message.content AS VARCHAR) as content
+    SELECT {_CONTENT_AS_JSON_STR} as content
     FROM read_json_auto('{{path}}', {_JSON_OPTS})
     WHERE type IN ('user', 'assistant')
     ORDER BY timestamp DESC
@@ -262,7 +270,7 @@ WHERE type = 'assistant' AND message.model IS NOT NULL
 
 TOKEN_USAGE_BY_MODEL_QUERY = f"""
 WITH deduplicated AS (
-    SELECT DISTINCT ON (message.id) 
+    SELECT DISTINCT ON (message.id)
         message.model as model,
         message.usage.input_tokens as input_tokens,
         message.usage.output_tokens as output_tokens,
@@ -310,7 +318,7 @@ ORDER BY timestamp
 
 DAILY_METRICS_QUERY = f"""
 WITH deduplicated AS (
-    SELECT DISTINCT ON (message.id) 
+    SELECT DISTINCT ON (message.id)
         timestamp,
         message.usage.input_tokens as input_tokens,
         message.usage.output_tokens as output_tokens,
@@ -344,7 +352,7 @@ WITH base_messages AS (
         message,
         CAST(message AS JSON) as message_json,
         sessionId as session_id,
-        CAST(message.content AS VARCHAR) as content_str
+        {_CONTENT_AS_JSON_STR} as content_str
     FROM read_json_auto('{{path}}', {_JSON_OPTS})
     WHERE type IN ('assistant', 'user')
 ),
@@ -439,12 +447,12 @@ hook_messages AS (
         false as is_error
     FROM base_messages
     WHERE type = 'user'
-      AND content_str NOT LIKE '[{{{{"tool_use_id"%' 
-      AND content_str NOT LIKE '[{{{{"type":"tool_result"%' 
-      AND (content_str LIKE '<command-name>%' 
-           OR content_str LIKE '<local-command-caveat>%' 
-           OR content_str LIKE '<local-command-stdout>%' 
-           OR content_str LIKE '<user-prompt-submit-hook>%')
+      AND content_str NOT LIKE '[{{{{"tool_use_id"%'
+      AND content_str NOT LIKE '[{{{{"type":"tool_result"%'
+      AND (content_str LIKE '"<command-name>%'
+           OR content_str LIKE '"<local-command-caveat>%'
+           OR content_str LIKE '"<local-command-stdout>%'
+           OR content_str LIKE '"<user-prompt-submit-hook>%')
 ),
 user_prompt_messages AS (
     SELECT
@@ -459,12 +467,12 @@ user_prompt_messages AS (
         false as is_error
     FROM base_messages
     WHERE type = 'user'
-      AND content_str NOT LIKE '[{{{{"tool_use_id"%' 
-      AND content_str NOT LIKE '[{{{{"type":"tool_result"%' 
-      AND content_str NOT LIKE '<command-name>%' 
-      AND content_str NOT LIKE '<local-command-caveat>%' 
-      AND content_str NOT LIKE '<local-command-stdout>%' 
-      AND content_str NOT LIKE '<user-prompt-submit-hook>%'
+      AND content_str NOT LIKE '[{{{{"tool_use_id"%'
+      AND content_str NOT LIKE '[{{{{"type":"tool_result"%'
+      AND content_str NOT LIKE '"<command-name>%'
+      AND content_str NOT LIKE '"<local-command-caveat>%'
+      AND content_str NOT LIKE '"<local-command-stdout>%'
+      AND content_str NOT LIKE '"<user-prompt-submit-hook>%'
 ),
 tool_result_messages AS (
     SELECT
@@ -532,8 +540,8 @@ ERROR_COUNT_QUERY = f"""
 SELECT COUNT(*) as error_count
 FROM read_json_auto('{{path}}', {_JSON_OPTS})
 WHERE type = 'user'
-  AND (CAST(message.content AS VARCHAR) LIKE '%"is_error": true%' 
-       OR CAST(message.content AS VARCHAR) LIKE '%"is_error":true%')
+  AND ({_CONTENT_AS_JSON_STR} LIKE '%"is_error": true%'
+       OR {_CONTENT_AS_JSON_STR} LIKE '%"is_error":true%')
 """
 
 SUBAGENT_CALLS_WITH_AGENT_ID_QUERY = f"""
@@ -664,7 +672,7 @@ WITH base_messages AS (
         message,
         CAST(message AS JSON) as message_json,
         sessionId as session_id,
-        CAST(message.content AS VARCHAR) as content_str
+        CAST(to_json(message.content) AS VARCHAR) as content_str
     FROM {source}
     WHERE type IN ('assistant', 'user')
 ),
@@ -761,10 +769,10 @@ hook_messages AS (
     WHERE type = 'user'
       AND content_str NOT LIKE '[{{"tool_use_id"%'
       AND content_str NOT LIKE '[{{"type":"tool_result"%'
-      AND (content_str LIKE '<command-name>%'
-           OR content_str LIKE '<local-command-caveat>%'
-           OR content_str LIKE '<local-command-stdout>%'
-           OR content_str LIKE '<user-prompt-submit-hook>%')
+      AND (content_str LIKE '"<command-name>%'
+           OR content_str LIKE '"<local-command-caveat>%'
+           OR content_str LIKE '"<local-command-stdout>%'
+           OR content_str LIKE '"<user-prompt-submit-hook>%')
 ),
 user_prompt_messages AS (
     SELECT
@@ -781,10 +789,10 @@ user_prompt_messages AS (
     WHERE type = 'user'
       AND content_str NOT LIKE '[{{"tool_use_id"%'
       AND content_str NOT LIKE '[{{"type":"tool_result"%'
-      AND content_str NOT LIKE '<command-name>%'
-      AND content_str NOT LIKE '<local-command-caveat>%'
-      AND content_str NOT LIKE '<local-command-stdout>%'
-      AND content_str NOT LIKE '<user-prompt-submit-hook>%'
+      AND content_str NOT LIKE '"<command-name>%'
+      AND content_str NOT LIKE '"<local-command-caveat>%'
+      AND content_str NOT LIKE '"<local-command-stdout>%'
+      AND content_str NOT LIKE '"<user-prompt-submit-hook>%'
 ),
 tool_result_messages AS (
     SELECT
@@ -1124,7 +1132,7 @@ WITH file_data AS (
     WHERE regexp_extract(filename, '.*/projects/[^/]+/([^/]+)\.jsonl$', 1) NOT LIKE 'agent-%'
 ),
 deduplicated AS (
-    SELECT DISTINCT ON (project_hash, session_id, message.id) 
+    SELECT DISTINCT ON (project_hash, session_id, message.id)
         project_hash,
         session_id,
         message.model as model,
@@ -1172,7 +1180,7 @@ WITH file_data AS (
     WHERE regexp_extract(filename, '.*/([^/]+)\.jsonl$', 1) NOT LIKE 'agent-%'
 ),
 deduplicated AS (
-    SELECT DISTINCT ON (session_id, message.id) 
+    SELECT DISTINCT ON (session_id, message.id)
         session_id,
         message.model as model,
         message.usage.input_tokens as input_tokens,
@@ -1199,7 +1207,7 @@ FROM deduplicated
 # Token usage by model across multiple files (for accurate cost calculation)
 TOKEN_USAGE_BY_MODEL_GLOB_QUERY = f"""
 WITH deduplicated AS (
-    SELECT DISTINCT ON (message.id) 
+    SELECT DISTINCT ON (message.id)
         message.model as model,
         message.usage.input_tokens as input_tokens,
         message.usage.output_tokens as output_tokens,
@@ -1238,7 +1246,7 @@ WITH file_data AS (
     WHERE regexp_extract(filename, '.*/([^/]+)\.jsonl$', 1) NOT LIKE 'agent-%'
 ),
 token_usage AS (
-    SELECT DISTINCT ON (session_id, message.id) 
+    SELECT DISTINCT ON (session_id, message.id)
         session_id,
         message.model as model,
         message.usage.input_tokens as input_tokens,
@@ -1294,7 +1302,7 @@ error_counts AS (
         COUNT(*) as error_count
     FROM file_data
     WHERE type = 'user'
-      AND (CAST(message.content AS VARCHAR) LIKE '%"is_error": true%' 
+      AND (CAST(message.content AS VARCHAR) LIKE '%"is_error": true%'
            OR CAST(message.content AS VARCHAR) LIKE '%"is_error":true%')
     GROUP BY session_id
 ),
@@ -1328,6 +1336,6 @@ ERROR_COUNT_GLOB_QUERY = f"""
 SELECT COUNT(*) as error_count
 FROM read_json_auto({{paths}}, {_JSON_OPTS})
 WHERE type = 'user'
-  AND (CAST(message.content AS VARCHAR) LIKE '%"is_error": true%' 
-       OR CAST(message.content AS VARCHAR) LIKE '%"is_error":true%')
+  AND (CAST(to_json(message.content) AS VARCHAR) LIKE '%"is_error": true%'
+       OR CAST(to_json(message.content) AS VARCHAR) LIKE '%"is_error":true%')
 """

@@ -6,7 +6,7 @@ It eliminates TypeError: can't compare offset-naive and offset-aware datetimes.
 Priority 4.5 implementation.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 def normalize_datetime(dt: datetime | str | None) -> datetime:
@@ -36,21 +36,21 @@ def normalize_datetime(dt: datetime | str | None) -> datetime:
         datetime.datetime(2024, 1, 15, 10, 30, tzinfo=datetime.timezone.utc)
     """
     if dt is None:
-        return datetime.min.replace(tzinfo=timezone.utc)
+        return datetime.min.replace(tzinfo=UTC)
 
     if isinstance(dt, str):
         try:
             # Handle ISO format with 'Z' suffix (common in JSON)
             dt = datetime.fromisoformat(dt.replace("Z", "+00:00"))
         except ValueError:
-            return datetime.min.replace(tzinfo=timezone.utc)
+            return datetime.min.replace(tzinfo=UTC)
 
     if dt.tzinfo is None:
         # Naive datetime - assume UTC
-        return dt.replace(tzinfo=timezone.utc)
+        return dt.replace(tzinfo=UTC)
 
     # Already aware - convert to UTC
-    return dt.astimezone(timezone.utc)
+    return dt.astimezone(UTC)
 
 
 def parse_timestamp(value: str | datetime | None) -> datetime | None:
@@ -70,11 +70,11 @@ def parse_timestamp(value: str | datetime | None) -> datetime | None:
         return None
     if isinstance(value, datetime):
         if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
     try:
         dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        return dt.astimezone(timezone.utc)
+        return dt.astimezone(UTC)
     except (ValueError, AttributeError):
         return None
 
@@ -85,4 +85,4 @@ def now_utc() -> datetime:
     Use this instead of datetime.now() or datetime.utcnow() throughout
     the application to ensure consistent timezone handling.
     """
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)

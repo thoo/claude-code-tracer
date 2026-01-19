@@ -671,13 +671,30 @@ function CopyButton({
 }
 
 function ToolUseDisplay({ tool }: { tool: ToolUse }) {
+  const [copied, setCopied] = useState(false);
   const isEditTool = tool.name === 'Edit';
   const isWriteTool = tool.name === 'Write';
 
+  const copyToolId = () => {
+    if (tool.id) {
+      navigator.clipboard.writeText(tool.id);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
   return (
     <div className="border border-gray-200 dark:border-surface-700 rounded-lg overflow-hidden">
-      <div className="bg-gray-100 dark:bg-surface-800 px-4 py-2 border-b border-gray-200 dark:border-surface-700">
-        <span className="text-accent-600 dark:text-accent-400 font-semibold font-mono">{tool.name}</span>
+      <div className="bg-gray-100 dark:bg-surface-800 px-4 py-2 border-b border-gray-200 dark:border-surface-700 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-accent-600 dark:text-accent-400 font-semibold font-mono">{tool.name}</span>
+          {tool.id && (
+            <span className="text-xs text-gray-500 dark:text-surface-400 font-mono flex items-center gap-1">
+              ({tool.id})
+              <CopyButton copied={copied} onClick={copyToolId} />
+            </span>
+          )}
+        </div>
       </div>
       <div className="p-4 bg-gray-50 dark:bg-surface-900/50">
         {isEditTool ? (
@@ -785,12 +802,12 @@ function WriteToolDisplay({ input }: { input: Record<string, unknown> }) {
   );
 }
 
-function ToolResultDisplay({ 
-  result, 
-  toolName, 
-  toolInput 
-}: { 
-  result: ToolResult; 
+function ToolResultDisplay({
+  result,
+  toolName,
+  toolInput
+}: {
+  result: ToolResult;
   toolName?: string;
   toolInput?: Record<string, unknown>;
 }) {
@@ -805,7 +822,7 @@ function ToolResultDisplay({
     const textParts = content
       .filter((block: any) => block && block.type === 'text' && typeof block.text === 'string')
       .map((block: any) => block.text);
-    
+
     if (textParts.length > 0) {
       content = textParts.join('\n');
     } else {
