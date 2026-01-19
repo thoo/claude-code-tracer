@@ -26,40 +26,80 @@ Analytics dashboard for visualizing Claude Code session traces. Provides detaile
 ## Architecture
 
 ```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
 │   React + Vite  │────▶│  FastAPI Backend │────▶│  ~/.claude/     │
 │   (Frontend)    │◀────│  (Python)        │◀────│  (JSONL logs)   │
-└─────────────────┘     └─────────────────┘     └─────────────────┘
+└─────────────────┘     └──────────────────┘     └─────────────────┘
 ```
 
 - **Backend**: Python FastAPI with Pydantic models, DuckDB for querying JSONL logs
 - **Frontend**: React + Vite + TailwindCSS + Recharts (planned)
 - **Data Source**: Claude Code session logs from `~/.claude/projects/`
 
-## Quick Start
+## Installation
+
+### Using pip
+
+```bash
+pip install claude-code-tracer
+
+# Run the dashboard
+cctracer
+```
+
+### Using uv
+
+```bash
+uv tool install claude-code-tracer
+
+# Run the dashboard
+cctracer
+```
+
+## Usage
+
+```bash
+cctracer                  # Start server, opens browser at http://localhost:8420
+cctracer --port 9000      # Custom port
+cctracer --no-browser     # Don't auto-open browser
+cctracer --help           # Show all options
+```
+
+The dashboard automatically reads sessions from `~/.claude/projects/`.
+
+## Development Setup
 
 ### Backend
 
 ```bash
 cd backend
 
-# Install dependencies (requires uv)
-uv venv
-uv pip install -e ".[dev]"
+# Install dependencies
+uv sync --all-extras
 
 # Run development server
-uv run uvicorn claude_code_tracer.main:app --reload
+uv run uvicorn claude_code_tracer.main:app --reload --port 8420
 
-# Server runs at http://localhost:8000
-# API docs at http://localhost:8000/docs
+# Server runs at http://localhost:8420
+# API docs at http://localhost:8420/docs
 ```
 
-### Frontend (Coming Soon)
+### Frontend
 
 ```bash
 cd frontend
 npm install
-npm run dev
+npm run dev   # Runs at http://localhost:5173, proxies API to :8420
+```
+
+### Using Makefile
+
+```bash
+make install   # Install all dependencies
+make dev       # Run frontend + backend dev servers
+make build     # Build for distribution
+make test      # Run tests
+make check     # Lint + test
 ```
 
 ## API Endpoints
@@ -135,13 +175,18 @@ Claude Code Tracer reads session data from:
 
 ## Model Pricing
 
-Current pricing (per million tokens):
+Current pricing (per million tokens) - [Source](https://docs.anthropic.com/en/docs/about-claude/models):
 
-| Model | Input | Output | Cache Create | Cache Read |
-|-------|-------|--------|--------------|------------|
-| claude-opus-4-5 | $15.00 | $75.00 | $18.75 | $1.50 |
-| claude-sonnet-4 | $3.00 | $15.00 | $3.75 | $0.30 |
-| claude-3-5-haiku | $1.00 | $5.00 | $1.25 | $0.10 |
+| Model | Input | Output | Cache Write | Cache Read |
+|-------|-------|--------|-------------|------------|
+| Claude Opus 4.5 | $5.00 | $25.00 | $6.25 | $0.50 |
+| Claude Opus 4.1 | $15.00 | $75.00 | $18.75 | $1.50 |
+| Claude Opus 4 | $15.00 | $75.00 | $18.75 | $1.50 |
+| Claude Sonnet 4.5 | $3.00 | $15.00 | $3.75 | $0.30 |
+| Claude Sonnet 4 | $3.00 | $15.00 | $3.75 | $0.30 |
+| Claude Haiku 4.5 | $1.00 | $5.00 | $1.25 | $0.10 |
+| Claude Haiku 3.5 | $0.80 | $4.00 | $1.00 | $0.08 |
+| Claude Haiku 3 | $0.25 | $1.25 | $0.30 | $0.03 |
 
 ## License
 
