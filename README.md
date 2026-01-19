@@ -36,30 +36,70 @@ Analytics dashboard for visualizing Claude Code session traces. Provides detaile
 - **Frontend**: React + Vite + TailwindCSS + Recharts (planned)
 - **Data Source**: Claude Code session logs from `~/.claude/projects/`
 
-## Quick Start
+## Installation
+
+### Using pip
+
+```bash
+pip install claude-code-tracer
+
+# Run the dashboard
+cctracer
+```
+
+### Using uv
+
+```bash
+uv tool install claude-code-tracer
+
+# Run the dashboard
+cctracer
+```
+
+## Usage
+
+```bash
+cctracer                  # Start server, opens browser at http://localhost:8420
+cctracer --port 9000      # Custom port
+cctracer --no-browser     # Don't auto-open browser
+cctracer --help           # Show all options
+```
+
+The dashboard automatically reads sessions from `~/.claude/projects/`.
+
+## Development Setup
 
 ### Backend
 
 ```bash
 cd backend
 
-# Install dependencies (requires uv)
-uv venv
-uv pip install -e ".[dev]"
+# Install dependencies
+uv sync --all-extras
 
 # Run development server
-uv run uvicorn claude_code_tracer.main:app --reload
+uv run uvicorn claude_code_tracer.main:app --reload --port 8420
 
-# Server runs at http://localhost:8000
-# API docs at http://localhost:8000/docs
+# Server runs at http://localhost:8420
+# API docs at http://localhost:8420/docs
 ```
 
-### Frontend (Coming Soon)
+### Frontend
 
 ```bash
 cd frontend
 npm install
-npm run dev
+npm run dev   # Runs at http://localhost:5173, proxies API to :8420
+```
+
+### Using Makefile
+
+```bash
+make install   # Install all dependencies
+make dev       # Run frontend + backend dev servers
+make build     # Build for distribution
+make test      # Run tests
+make check     # Lint + test
 ```
 
 ## API Endpoints

@@ -77,3 +77,7 @@ logs/
 # DuckDB
 *.duckdb
 *.duckdb.wal
+
+# Local planning docs
+improvement_plan.md
+phase*_details.md

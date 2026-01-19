@@ -2,6 +2,19 @@
 
 FastAPI-based analytics API for Claude Code sessions. Reads session data from `~/.claude/projects/` and provides endpoints for viewing metrics, messages, tool usage, and subagent activity.
 
+## Installation
+
+```bash
+# Using pip
+pip install claude-code-tracer
+
+# Using uv
+uv tool install claude-code-tracer
+
+# Run the dashboard
+cctracer
+```
+
 ## Project Structure
 
 ```
@@ -73,19 +86,28 @@ src/claude_code_tracer/
 | `GET /` | API info |
 | `GET /health` | Health check |
 
-## Setup
+## CLI Usage
 
 ```bash
-# Create virtual environment and install dependencies
-uv venv
-uv pip install -e ".[dev]"
+cctracer                  # Start server, opens browser at http://localhost:8420
+cctracer --port 9000      # Custom port
+cctracer --no-browser     # Don't auto-open browser
+cctracer --reload         # Enable auto-reload for development
+```
+
+## Development Setup
+
+```bash
+# Install dependencies
+uv sync --all-extras
 
 # Run development server
-uv run uvicorn claude_code_tracer.main:app --reload --port 8000
+uv run uvicorn claude_code_tracer.main:app --reload --port 8420
 
-# Alternative: activate venv first
-source .venv/bin/activate
-uvicorn claude_code_tracer.main:app --reload
+# Or use the CLI with reload
+uv run cctracer --reload
+
+# API docs at http://localhost:8420/docs
 ```
 
 ## Environment Variables

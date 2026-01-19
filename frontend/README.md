@@ -62,7 +62,7 @@ src/
 # Install dependencies
 npm install
 
-# Run development server (connects to backend on port 8000)
+# Run development server (proxies to backend on port 8420)
 npm run dev
 
 # Build for production
@@ -82,7 +82,7 @@ The frontend proxies API requests to the backend. Configure in `vite.config.ts`:
 ```ts
 server: {
   proxy: {
-    '/api': 'http://localhost:8000'
+    '/api': 'http://localhost:8420'
   }
 }
 ```
