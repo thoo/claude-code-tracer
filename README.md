@@ -13,15 +13,13 @@ Analytics dashboard for visualizing Claude Code session traces. Provides detaile
 ### Advanced Tracking
 - **Subagent Tracking** - Monitor spawned subagents (Explore, Plan, Bash agents)
 - **Skill Usage** - Track invoked skills (/commit, /review-pr, etc.)
-- **Code Changes** - Lines added/removed, files created/modified
 - **Error Analysis** - Track and categorize errors across sessions
-- **User Commands** - Analyze command patterns and interruption rates
 
 ### Metrics & Insights
 - Daily token/cost trends
 - Cache hit rate analysis
 - Model usage distribution
-- Command complexity over time
+- Tool execution time
 
 ## Architecture
 
