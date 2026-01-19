@@ -26,10 +26,10 @@ Analytics dashboard for visualizing Claude Code session traces. Provides detaile
 ## Architecture
 
 ```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
 │   React + Vite  │────▶│  FastAPI Backend │────▶│  ~/.claude/     │
 │   (Frontend)    │◀────│  (Python)        │◀────│  (JSONL logs)   │
-└─────────────────┘     └─────────────────┘     └─────────────────┘
+└─────────────────┘     └──────────────────┘     └─────────────────┘
 ```
 
 - **Backend**: Python FastAPI with Pydantic models, DuckDB for querying JSONL logs

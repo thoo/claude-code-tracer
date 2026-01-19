@@ -4,38 +4,49 @@ Analytics dashboard for visualizing Claude Code session traces. Reads session lo
 
 ## Quick Reference
 
-### Backend (FastAPI + DuckDB)
+### Using Makefile (Recommended)
 
 ```bash
-cd backend
-uv run uvicorn claude_code_tracer.main:app --reload  # Dev server at :8000
-uv run pytest                                         # Run tests
-uv run ruff check src/ && uv run ruff format src/    # Lint & format
-uv run mypy src/                                      # Type check (strict)
+make install          # Install all dependencies
+make dev              # Run frontend + backend dev servers
+make build            # Build frontend and bundle into package
+make run              # Run the bundled app
+make test             # Run tests
+make check            # Run lint + test
 ```
 
-### Frontend (React + Vite + TypeScript)
+### Manual Commands
 
 ```bash
-cd frontend
-npm install           # Install dependencies
-npm run dev           # Dev server at :5173 (proxies to :8000)
-npm run build         # Production build
-npm run lint          # ESLint
+# Backend (port 8420)
+cd backend && uv run uvicorn claude_code_tracer.main:app --reload --port 8420
+
+# Frontend (proxies to :8420)
+cd frontend && npm run dev
+
+# Tests & Quality
+cd backend && uv run pytest
+cd backend && uv run ruff check src/ && uv run mypy src/
 ```
 
-### Pre-commit
+### CLI Usage (after `make build` or `pip install`)
 
 ```bash
-uv run pre-commit install      # Install hooks
-uv run pre-commit run --all    # Run all hooks
+cctracer              # Start server, opens browser
+cctracer --port 9000  # Custom port
+cctracer --no-browser # Don't auto-open browser
+
+# Long form also works
+claude-code-tracer
 ```
 
 ## Project Structure
 
 ```
 backend/src/claude_code_tracer/
-├── main.py              # FastAPI app, lifespan, CORS
+├── main.py              # FastAPI app, lifespan, CORS, static file serving
+├── cli.py               # CLI entry point (claude-code-tracer command)
+├── static/              # Bundled frontend assets (populated by make build)
 ├── routers/             # API endpoints (sessions, metrics, subagents)
 ├── models/              # Pydantic models (entries, responses)
 ├── services/
