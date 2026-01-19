@@ -33,7 +33,7 @@ Analytics dashboard for visualizing Claude Code session traces. Provides detaile
 ```
 
 - **Backend**: Python FastAPI with Pydantic models, DuckDB for querying JSONL logs
-- **Frontend**: React + Vite + TailwindCSS + Recharts (planned)
+- **Frontend**: React + Vite + TailwindCSS + Recharts
 - **Data Source**: Claude Code session logs from `~/.claude/projects/`
 
 ## Installation
@@ -102,24 +102,6 @@ make test      # Run tests
 make check     # Lint + test
 ```
 
-## API Endpoints
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /api/projects` | List all projects with stats |
-| `GET /api/projects/{hash}/sessions` | List sessions for a project |
-| `GET /api/sessions/{hash}/{id}/messages` | Paginated messages with filters |
-| `GET /api/sessions/{hash}/{id}/tools` | Tool usage breakdown |
-| `GET /api/sessions/{hash}/{id}/metrics` | Token usage and costs |
-| `GET /api/sessions/{hash}/{id}/subagents` | Subagent tracking |
-| `GET /api/sessions/{hash}/{id}/skills` | Skills invoked |
-| `GET /api/sessions/{hash}/{id}/code-changes` | Lines written/modified |
-| `GET /api/sessions/{hash}/{id}/errors` | Error analysis |
-| `GET /api/sessions/{hash}/{id}/commands` | User commands with stats |
-| `GET /api/metrics/daily/{hash}` | Daily aggregated metrics |
-| `GET /api/metrics/aggregate` | Cross-project aggregate stats |
-| `GET /api/metrics/pricing` | Model pricing information |
-
 ## Development
 
 ```bash
@@ -159,7 +141,7 @@ claude-code-tracer/
 │   │       ├── metrics.py       # Cost calculation
 │   │       └── log_parser.py    # JSONL parsing
 │   └── tests/
-├── frontend/                     # React app (planned)
+├── frontend/                     # React dashboard
 ├── docs/
 └── .pre-commit-config.yaml
 ```
@@ -180,13 +162,8 @@ Current pricing (per million tokens) - [Source](https://docs.anthropic.com/en/do
 | Model | Input | Output | Cache Write | Cache Read |
 |-------|-------|--------|-------------|------------|
 | Claude Opus 4.5 | $5.00 | $25.00 | $6.25 | $0.50 |
-| Claude Opus 4.1 | $15.00 | $75.00 | $18.75 | $1.50 |
-| Claude Opus 4 | $15.00 | $75.00 | $18.75 | $1.50 |
 | Claude Sonnet 4.5 | $3.00 | $15.00 | $3.75 | $0.30 |
-| Claude Sonnet 4 | $3.00 | $15.00 | $3.75 | $0.30 |
 | Claude Haiku 4.5 | $1.00 | $5.00 | $1.25 | $0.10 |
-| Claude Haiku 3.5 | $0.80 | $4.00 | $1.00 | $0.08 |
-| Claude Haiku 3 | $0.25 | $1.25 | $0.30 | $0.03 |
 
 ## License
 
