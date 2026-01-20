@@ -543,7 +543,7 @@ async def get_session_message_filters(
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     result = MessageFilterOptions(
-        types=["assistant", "user", "hook", "tool_result"],
+        types=["assistant", "user", "subagent", "hook", "tool_result"],
         tools=tools,
         error_count=error_count,
     )
