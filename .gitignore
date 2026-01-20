@@ -60,10 +60,15 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+*.tsbuildinfo
+vite.config.js
 
 # Build outputs
 frontend/dist/
 frontend/build/
+backend/src/claude_code_tracer/static/assets/
+backend/src/claude_code_tracer/static/*.html
+backend/src/claude_code_tracer/static/*.svg
 *.local
 
 # OS files
