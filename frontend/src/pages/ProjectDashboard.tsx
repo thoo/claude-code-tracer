@@ -43,7 +43,7 @@ export default function ProjectDashboard() {
     );
   }
 
-  const sessions = sessionsData?.sessions || [];
+  const sessions = (sessionsData?.sessions || []).filter(s => s.message_count > 0);
 
   if (sessions.length === 0) {
     return (
