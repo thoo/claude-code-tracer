@@ -271,6 +271,7 @@ def _cached_session_summary_impl(
             tokens=tokens,
             cost=total_cost,
             errors=error_count,
+            subagent_count=len(subagent_files),
         )
 
 
