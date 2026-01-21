@@ -8,7 +8,15 @@ Placeholders:
 - {type_filter}, {where_clause}: Optional filtering clauses
 """
 
-# Common read_json_auto options (100MB max object size, skip malformed entries, merge schemas)
+# Common read_json_auto options:
+# - maximum_object_size: 100MB to handle large session files
+# - ignore_errors: Skip malformed entries instead of failing
+# - union_by_name: Merge schemas across rows (handles missing columns with NULL)
+#
+# NOTE: We intentionally do NOT use the `columns=` parameter because:
+# 1. It restricts which columns are read (excluding any not listed)
+# 2. Declaring `message` as JSON prevents nested access (e.g., message.usage.input_tokens)
+# Instead, we rely on union_by_name=true and SQL-level NULL checks for missing columns.
 _JSON_OPTS = "maximum_object_size=104857600, ignore_errors=true, union_by_name=true"
 
 # Helper for robust content string extraction

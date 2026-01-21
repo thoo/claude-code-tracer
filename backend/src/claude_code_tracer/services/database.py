@@ -12,6 +12,8 @@ import duckdb
 import orjson
 from loguru import logger
 
+from claude_code_tracer.services.queries import _JSON_OPTS
+
 CLAUDE_DIR = Path.home() / ".claude"
 PROJECTS_DIR = CLAUDE_DIR / "projects"
 UUID_PATTERN = re_compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
@@ -130,9 +132,7 @@ def get_or_create_session_view(session_path: Path) -> str:
                 SELECT *
                 FROM read_json_auto(
                     '{path_str}',
-                    maximum_object_size=104857600,
-                    ignore_errors=true,
-                    union_by_name=true
+                    {_JSON_OPTS}
                 )
             """)
             _session_views[path_str] = (view_name, current_time, current_mtime)
@@ -194,7 +194,7 @@ def get_session_view_query(session_path: Path) -> str:
         return view_name
     except Exception:
         # Fall back to direct read
-        return f"read_json_auto('{session_path}', maximum_object_size=104857600, ignore_errors=true, union_by_name=true)"
+        return f"read_json_auto('{session_path}', {_JSON_OPTS})"
 
 
 # Required columns for message queries
@@ -214,7 +214,7 @@ def session_has_messages(session_path: Path) -> bool:
     if not session_path.exists():
         return False
 
-    source = f"read_json_auto('{session_path}', maximum_object_size=104857600, ignore_errors=true, union_by_name=true)"
+    source = f"read_json_auto('{session_path}', {_JSON_OPTS})"
 
     try:
         conn = DuckDBPool.get_connection()
