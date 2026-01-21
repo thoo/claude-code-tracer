@@ -1,6 +1,6 @@
 [project]
 name = "claude-code-tracer"
-version = "0.1.3"
+version = "0.1.4"
 description = "Analytics dashboard for Claude Code sessions"
 readme = "README.md"
 license = "MIT"

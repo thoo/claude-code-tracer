@@ -10,7 +10,17 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       staleTime: 1000 * 60 * 5, // 5 minutes
-      retry: 1,
+      // Don't retry on server errors (5xx) - they usually indicate a real problem
+      retry: (failureCount, error) => {
+        if (error instanceof Error && error.message.includes('API error: 5')) {
+          return false;
+        }
+        return failureCount < 1;
+      },
+      // Refetch when component mounts to clear stale error states
+      refetchOnMount: true,
+      // But don't refetch on window focus (too aggressive)
+      refetchOnWindowFocus: false,
     },
   },
 });
