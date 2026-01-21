@@ -23,6 +23,10 @@ _session_views: dict[str, tuple[str, float, float]] = {}
 _session_views_lock = threading.Lock()
 SESSION_VIEW_TTL = 300  # 5 minutes
 
+# Optional columns that may be missing from some session files.
+# When creating views, we add NULL for any missing columns to prevent query failures.
+OPTIONAL_COLUMNS = {"sessionId", "cwd", "data", "toolUseID", "parentToolUseID"}
+
 
 def is_valid_uuid(val: str) -> bool:
     """Check if a string is a valid UUID."""
@@ -125,11 +129,27 @@ def get_or_create_session_view(session_path: Path) -> str:
 
         conn = DuckDBPool.get_connection()
         try:
+            # First, detect which columns exist in the file
+            source = f"read_json_auto('{path_str}', {_JSON_OPTS})"
+            result = conn.execute(f"DESCRIBE SELECT * FROM {source}").fetchall()
+            existing_columns = {row[0] for row in result}
+
+            # Build SELECT list: include all existing columns, add NULL for missing optional columns
+            missing_optionals = OPTIONAL_COLUMNS - existing_columns
+            if missing_optionals:
+                # Need to explicitly select columns and add NULLs for missing ones
+                select_parts = ["*"]
+                for col in missing_optionals:
+                    select_parts.append(f"NULL AS {col}")
+                select_clause = ", ".join(select_parts)
+            else:
+                select_clause = "*"
+
             # Use regular view (not TEMPORARY) because temporary views are not
             # visible to cursors created from the same connection in DuckDB
             conn.execute(f"""
                 CREATE OR REPLACE VIEW {view_name} AS
-                SELECT *
+                SELECT {select_clause}
                 FROM read_json_auto(
                     '{path_str}',
                     {_JSON_OPTS}
@@ -183,18 +203,46 @@ def cleanup_stale_views() -> int:
     return cleaned
 
 
+def _get_missing_columns(session_path: Path) -> set[str]:
+    """Detect which optional columns are missing from a session file."""
+    source = f"read_json_auto('{session_path}', {_JSON_OPTS})"
+    try:
+        conn = DuckDBPool.get_connection()
+        result = conn.execute(f"DESCRIBE SELECT * FROM {source}").fetchall()
+        existing_columns = {row[0] for row in result}
+        return OPTIONAL_COLUMNS - existing_columns
+    except Exception:
+        return set()  # Assume no missing columns on error
+
+
+def _build_safe_source(session_path: Path) -> str:
+    """Build a read_json_auto expression that adds NULL for missing optional columns.
+
+    This ensures queries don't fail when accessing columns that don't exist in the file.
+    """
+    source = f"read_json_auto('{session_path}', {_JSON_OPTS})"
+    missing = _get_missing_columns(session_path)
+    if not missing:
+        return source
+
+    # Wrap in a subquery that adds NULL for missing columns
+    null_cols = ", ".join(f"NULL AS {col}" for col in missing)
+    return f"(SELECT *, {null_cols} FROM {source})"
+
+
 def get_session_view_query(session_path: Path) -> str:
     """Get a query source for session data - either view name or read_json_auto.
 
     This is a fallback-safe version that tries to use a view but falls back
-    to direct file reading if view creation fails.
+    to direct file reading if view creation fails. Both paths handle missing
+    optional columns by adding NULL placeholders.
     """
     try:
         view_name = get_or_create_session_view(session_path)
         return view_name
     except Exception:
-        # Fall back to direct read
-        return f"read_json_auto('{session_path}', {_JSON_OPTS})"
+        # Fall back to direct read with missing column handling
+        return _build_safe_source(session_path)
 
 
 # Required columns for message queries

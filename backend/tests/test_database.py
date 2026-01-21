@@ -1,3 +1,5 @@
+import json
+
 from claude_code_tracer.services.database import is_valid_uuid
 
 
@@ -86,3 +88,57 @@ def test_subagent_discovery_and_caching(mock_projects_dir):
     cached_files = get_subagent_files_for_session(project_hash, session_id)
     assert fake_path in cached_files
     assert len(cached_files) == 3
+
+
+def test_session_view_handles_missing_columns(mock_projects_dir):
+    """Test that session views handle missing optional columns gracefully."""
+    from claude_code_tracer.services.database import (
+        get_connection,
+        get_or_create_session_view,
+        invalidate_session_view,
+    )
+
+    project_hash = "missing-cols-test"
+    session_id = "550e8400-e29b-41d4-a716-446655440001"
+    project_dir = mock_projects_dir / project_hash
+    project_dir.mkdir()
+
+    session_path = project_dir / f"{session_id}.jsonl"
+
+    # Create a minimal session file WITHOUT optional columns (sessionId, cwd, data, toolUseID, parentToolUseID)
+    with open(session_path, "w") as f:
+        # Only uuid, type, timestamp, message - no optional columns
+        msg = {
+            "uuid": "msg-1",
+            "type": "assistant",
+            "timestamp": "2024-01-01T12:00:00Z",
+            "message": {
+                "id": "msg-1",
+                "content": "Hello",
+                "model": "claude-3-sonnet",
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+            },
+        }
+        f.write(json.dumps(msg) + "\n")
+
+    # Clear any existing view
+    invalidate_session_view(session_path)
+
+    # Create the view - should succeed even with missing columns
+    view_name = get_or_create_session_view(session_path)
+    assert view_name.startswith("session_")
+
+    # Query the view for optional columns - should return NULL, not fail
+    with get_connection() as conn:
+        # This query would fail if sessionId column doesn't exist
+        result = conn.execute(f"SELECT uuid, sessionId, cwd, toolUseID FROM {view_name}").fetchall()
+
+        assert len(result) == 1
+        row = result[0]
+        assert row[0] == "msg-1"  # uuid exists
+        assert row[1] is None  # sessionId is NULL (missing from file)
+        assert row[2] is None  # cwd is NULL (missing from file)
+        assert row[3] is None  # toolUseID is NULL (missing from file)
+
+    # Cleanup
+    invalidate_session_view(session_path)
